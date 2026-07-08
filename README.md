@@ -67,7 +67,7 @@
 | 标签 | 内容 |
 |------|------|
 | **计划** | 建仓计划 + 收割计算（顶部双 Tab 切换，状态独立保持）|
-| **自选** | 添加 / 删除自选股，实时行情刷新，左滑删除 |
+| **自选** | 添加 / 删除自选股，实时行情刷新，左滑删除；可为每只股设置目标价与警戒价 |
 | **持仓** | 持仓账本 + 每张卡片三键快捷跳转 |
 | **排雷** | 自动估值筛选；通过后一键跳转建仓计划 |
 | **策略** | 筛选、建仓、回本、留存的核心框架与退出红线 |
@@ -81,7 +81,7 @@
 ### 收割计算
 
 - **网格模式**：以固定百分比间距计算上下轨
-- **ATR 模式**：以真实波幅 × 倍数计算动态区间
+- **ATR 模式**：自动从 K 线数据计算真实波幅（Wilder ATR，标准 14 日周期），也可手动输入；以 ATR × 倍数计算动态区间
 - 从持仓跳入时，剩余本金缺口和持仓数量自动填充
 - 零成本可达时，以金边高亮卡片输出精确提示语，含标的名称、卖出数量、触发价、剩余归零数量
 
@@ -127,11 +127,16 @@
 | 层级 | 选型 |
 |------|------|
 | 跨端框架 | Flutter 3.x · iOS + Android |
-| 状态管理 | Riverpod 2.x |
+| 状态管理 | Riverpod 2.x（riverpod_annotation 代码生成）|
 | 本地数据库 | SQLite（sqflite）|
-| 行情数据 | 第三方公开行情接口（详见数据说明）|
-| 图表 | 自绘 CustomPainter（K 线折线图）|
-| 核心算法 | 纯本地运算，离线完全可用 |
+| 网络请求 | Dio 5.x + dio_cache_interceptor（带缓存）|
+| 行情数据 | 新浪财经（主） / 腾讯财经（备） / 东方财富（搜索、指数、北向）/ 聚合数据（可选，需 key）|
+| K 线图表 | k_chart 包（标准蜡烛图）|
+| 统计图表 | fl_chart（估值雷达、百分位柱图）|
+| ATR 算法 | 本地 Wilder ATR，从 K 线自动计算，离线可用 |
+| 价格提醒 | flutter_local_notifications（系统推送，支持 Android / iOS）|
+| 轻量存储 | shared_preferences（偏好设置）|
+| UI 组件 | shimmer / flutter_slidable / percent_indicator / badges / iconsax |
 
 ---
 
@@ -144,23 +149,29 @@ lib/
 ├── models/
 │   ├── stock.dart                  # 股票行情模型
 │   ├── holding_batch.dart          # 持仓批次 & 聚合视图
-│   ├── watchlist.dart              # 自选股
+│   ├── watchlist.dart              # 自选股（含目标价 / 警戒价字段）
 │   └── stock_context.dart          # 跨页面流程上下文（串联数据载体）
 ├── database/                       # SQLite CRUD
-├── services/                       # 行情接口封装
+├── services/
+│   ├── api_config.dart             # 多数据源地址配置（新浪/腾讯/东方财富/聚合）
+│   ├── stock_api_service.dart      # 行情接口封装
+│   ├── atr_service.dart            # Wilder ATR 本地计算
+│   ├── notification_service.dart   # 系统推送（flutter_local_notifications）
+│   └── alert_polling_service.dart  # 盘中轮询 → 触价自动推送
 ├── providers/                      # 行情、持仓状态管理（Riverpod）
 ├── screens/
 │   ├── home_screen.dart            # 底部导航 + 计划双 Tab
 │   ├── seed_plan_screen.dart       # 建仓计划
-│   ├── harvest_calculator_screen.dart  # 收割计算
+│   ├── harvest_calculator_screen.dart  # 收割计算（ATR 自动 / 手动双模式）
 │   ├── seed_screening_screen.dart  # 排雷筛选
 │   ├── holding_tracker_screen.dart # 持仓账本
 │   ├── zero_cost_vault_screen.dart # 零成本资产库
 │   ├── add_holding_batch_screen.dart   # 记录入账
-│   ├── watchlist_screen.dart       # 自选观察
-│   ├── market_screen.dart          # 行情
-│   ├── stock_detail_screen.dart    # 股票详情
-│   └── strategy_screen.dart       # 策略纪律
+│   ├── watchlist_screen.dart       # 自选观察（目标价 / 警戒价提醒）
+│   ├── market_screen.dart          # 市场概览（指数 + 北向资金）
+│   ├── search_screen.dart          # 股票搜索（代码 / 名称，跨页复用）
+│   ├── stock_detail_screen.dart    # 股票详情 + K 线
+│   └── strategy_screen.dart        # 策略纪律
 └── utils/                          # 数字 / 日期格式化
 ```
 
@@ -203,20 +214,21 @@ flutter build ios --release      # iOS（需要 Xcode）
 
 | 类型 | 说明 |
 |------|------|
-| **本地功能** | 建仓计划、持仓账本、收割计算、策略纪律、零成本资产库均为本地计算和本地存储，**完全离线可用** |
-| **行情数据** | 行情展示与排雷筛选中的估值 / 财务数据通过第三方公开接口获取，数据准确性、完整性和及时性由数据提供方决定，本工具不作任何保证；字段受限时自动降级为手工核验模式 |
+| **本地功能** | 建仓计划、持仓账本、收割计算、ATR 计算、策略纪律、零成本资产库均为本地计算和本地存储，**完全离线可用** |
+| **行情数据** | 多源降级策略：新浪财经（主，15 分钟延迟，免费合规）→ 腾讯财经（备用）→ 东方财富（搜索 / 指数 / 北向资金）→ 聚合数据（可选，需申请 key，准实时）|
+| **价格提醒** | 盘中轮询仅在交易时段（09:25–15:05，周一至周五）运行，单标的推送冷却 30 分钟，不重复轰炸 |
 | **生产化建议** | 商业部署建议接入具有合规授权的金融数据服务商，并遵守相应服务条款 |
 
 ---
 
 ## 后续规划
 
-| 方向 | 说明 |
-|------|------|
-| 系统推送 | 接入后台行情轮询后，App 内提示升级为盘中系统通知 |
-| ATR 自动计算 | 从 K 线数据直接算出 ATR，收割页无需手填 |
-| 金字塔权重 | 建仓计划支持正金字塔（越跌越重）/ 等额 / 倒金字塔三种仓位分配模式 |
-| 定投模式 | 增加时间 + 价格双维度的定投建仓方案 |
+| 方向 | 状态 | 说明 |
+|------|------|------|
+| 系统推送 | ✅ 已完成 | 自选股可设目标价 / 警戒价，盘中轮询（3 分钟间隔，交易时段限定）自动触发系统通知 |
+| ATR 自动计算 | ✅ 已完成 | 收割计算页自动从 K 线拉取并计算 Wilder ATR（14 日），也可手动输入 |
+| 金字塔权重 | ✅ 已完成 | 建仓计划支持正金字塔（越跌越重）/ 等额 / 倒金字塔三种仓位分配模式 |
+| 定投模式 | ✅ 已完成 | 时间 + 价格双维度定投；支持每周 / 每两周 / 每月周期，可选价格上限与回弹提醒 |
 
 ---
 
