@@ -44,6 +44,9 @@ dependencies:
   # 图标
   iconsax: ^0.0.8
 
+  # 本地通知（盘中价格提醒）
+  flutter_local_notifications: ^17.2.4
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

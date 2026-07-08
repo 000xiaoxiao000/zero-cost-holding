@@ -1,8 +1,13 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/watchlist.dart';
 import '../models/stock.dart';
 import '../database/database_helper.dart';
 import '../services/stock_api_service.dart';
+import '../services/alert_polling_service.dart';
+import '../services/notification_service.dart';
+import '../services/atr_service.dart';
 
 // ── 自选股 Provider ────────────────────────────────────────────────────────────
 
@@ -14,6 +19,7 @@ class WatchlistNotifier extends StateNotifier<List<Watchlist>> {
   Future<void> load() async {
     final rows = await _db.getWatchlist();
     state = rows.map(Watchlist.fromMap).toList();
+    _syncPolling();
   }
 
   Future<void> add(Watchlist item) async {
@@ -24,6 +30,7 @@ class WatchlistNotifier extends StateNotifier<List<Watchlist>> {
   Future<void> remove(String code) async {
     await _db.removeFromWatchlist(code);
     state = state.where((w) => w.stockCode != code).toList();
+    _syncPolling();
   }
 
   Future<void> updateTargets(
@@ -34,19 +41,44 @@ class WatchlistNotifier extends StateNotifier<List<Watchlist>> {
   }
 
   bool contains(String code) => state.any((w) => w.stockCode == code);
+
+  /// 有任意一只股票设置了目标价或警戒价时启动后台轮询
+  void _syncPolling() {
+    final hasAlerts =
+        state.any((w) => w.targetPrice != null || w.alertPrice != null);
+    final polling = AlertPollingService();
+    if (hasAlerts) {
+      polling.start(watchlistGetter: () => state);
+    } else {
+      polling.stop();
+    }
+  }
 }
 
 final watchlistProvider =
     StateNotifierProvider<WatchlistNotifier, List<Watchlist>>(
         (ref) => WatchlistNotifier());
 
-// ── 自选股行情 Provider ────────────────────────────────────────────────────────
+// ── 自选股行情 Provider（含通知检查）────────────────────────────────────────────
 
 final watchlistQuotesProvider =
     FutureProvider.autoDispose<Map<String, Stock>>((ref) async {
   final watchlist = ref.watch(watchlistProvider);
   if (watchlist.isEmpty) return {};
-  return StockApiService().fetchBatchQuotes(watchlist);
+  final quotes = await StockApiService().fetchBatchQuotes(watchlist);
+
+  for (final item in watchlist) {
+    final stock = quotes[item.stockCode];
+    if (stock == null || stock.price <= 0) continue;
+    await NotificationService().checkAndNotify(
+      code: item.stockCode,
+      name: item.stockName,
+      price: stock.price,
+      targetPrice: item.targetPrice,
+      alertPrice: item.alertPrice,
+    );
+  }
+  return quotes;
 });
 
 // ── 市场指数 Provider ─────────────────────────────────────────────────────────
@@ -100,4 +132,14 @@ final klineProvider = FutureProvider.autoDispose
 final northboundProvider =
     FutureProvider.autoDispose<Map<String, dynamic>>((ref) {
   return StockApiService().fetchNorthboundFlow();
+});
+
+// ── ATR Provider（14日 Wilder ATR，从 60 根日K自动计算）──────────────────────
+
+final atrProvider =
+    FutureProvider.autoDispose.family<double?, (String, String)>(
+        (ref, args) async {
+  final klines =
+      await StockApiService().fetchKlineDaily(args.$1, args.$2, limit: 60);
+  return AtrService.calculate(klines);
 });

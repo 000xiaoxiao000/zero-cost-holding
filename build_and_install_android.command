@@ -3,9 +3,10 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
-./build_debug_apk.sh
+./build_android_debug.sh
 
-adb install -r build/app/outputs/apk/debug/ZeroCostHolding-v1.0.0-debug.apk
+VERSION=$(grep '^version:' pubspec.yaml | awk '{print $2}' | cut -d'+' -f1)
+adb install -r "build/app/outputs/apk/debug/ZeroCostHolding-v${VERSION}-debug.apk"
 
 echo
 echo "Build and install complete."

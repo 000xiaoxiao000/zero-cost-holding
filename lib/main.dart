@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'screens/home_screen.dart';
 import 'screens/search_screen.dart';
 import 'services/stock_api_service.dart';
+import 'services/notification_service.dart';
 import 'database/database_helper.dart';
 import 'theme/app_theme.dart';
 
@@ -26,6 +27,8 @@ void main() async {
 
   StockApiService().init();
   await DatabaseHelper().database;
+  await NotificationService().init();
+  await NotificationService().requestPermission();
 
   runApp(const ProviderScope(child: ZeroCostHoldingApp()));
 }

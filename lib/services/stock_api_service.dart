@@ -931,6 +931,35 @@ class StockApiService {
     return (pePercentile: null, pbPercentile: null);
   }
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // ATR 计算（Average True Range，默认 14 日）
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /// 从 fetchKlineDaily 返回的 K 线列表计算 ATR。
+  ///
+  /// 算法：True Range = max(High-Low, |High-PrevClose|, |Low-PrevClose|)
+  /// ATR = 前 [period] 个 TR 的简单移动平均。
+  /// 要求 klines.length >= period + 1，否则返回 null。
+  double? calculateATR(List<Map<String, dynamic>> klines, {int period = 14}) {
+    if (klines.length < period + 1) return null;
+    final recent = klines.sublist(klines.length - (period + 1));
+    final trs = <double>[];
+    for (int i = 1; i < recent.length; i++) {
+      final high = (_n(recent[i]['high']) ?? 0.0);
+      final low = (_n(recent[i]['low']) ?? 0.0);
+      final prevClose = (_n(recent[i - 1]['close']) ?? 0.0);
+      if (high <= 0 || prevClose <= 0) continue;
+      final tr = [
+        high - low,
+        (high - prevClose).abs(),
+        (low - prevClose).abs(),
+      ].reduce((a, b) => a > b ? a : b);
+      trs.add(tr);
+    }
+    if (trs.isEmpty) return null;
+    return trs.reduce((a, b) => a + b) / trs.length;
+  }
+
   /// 计算 value 在 series 中的历史百分位（0~100 整数）
   int? _percentileOf(List<double> series, double? value) {
     if (series.isEmpty || value == null) return null;

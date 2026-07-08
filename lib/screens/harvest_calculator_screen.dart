@@ -2,22 +2,25 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/stock_context.dart';
+import '../providers/stock_providers.dart';
 import '../theme/app_theme.dart';
 import '../utils/formatters.dart';
 
-class HarvestCalculatorScreen extends StatefulWidget {
+class HarvestCalculatorScreen extends ConsumerStatefulWidget {
   final StockContext? stockContext;
 
   const HarvestCalculatorScreen({super.key, this.stockContext});
 
   @override
-  State<HarvestCalculatorScreen> createState() =>
+  ConsumerState<HarvestCalculatorScreen> createState() =>
       _HarvestCalculatorScreenState();
 }
 
-class _HarvestCalculatorScreenState extends State<HarvestCalculatorScreen> {
+class _HarvestCalculatorScreenState
+    extends ConsumerState<HarvestCalculatorScreen> {
   late final TextEditingController _currentPriceController;
   late final TextEditingController _remainingCostController;
   late final TextEditingController _quantityController;
@@ -27,6 +30,8 @@ class _HarvestCalculatorScreenState extends State<HarvestCalculatorScreen> {
 
   late String _assetType;
   String _mode = 'grid';
+  bool _atrAutoLoading = false;
+  bool _atrAutoLoaded = false;
 
   @override
   void initState() {
@@ -42,6 +47,24 @@ class _HarvestCalculatorScreenState extends State<HarvestCalculatorScreen> {
     _quantityController = TextEditingController(
       text: ctx?.remainingQty?.toStringAsFixed(0) ?? '3000',
     );
+  }
+
+  /// 当切换到 ATR 模式且存在 stock context 时自动从 K 线拉取 ATR
+  Future<void> _autoLoadAtr() async {
+    final ctx = widget.stockContext;
+    if (ctx?.code == null || ctx?.market == null) return;
+    if (_atrAutoLoaded || _atrAutoLoading) return;
+    setState(() => _atrAutoLoading = true);
+    final atr = await ref.read(atrProvider((ctx!.code!, ctx.market!)).future);
+    if (mounted && atr != null && atr > 0) {
+      _atrController.text = atr.toStringAsFixed(4);
+      setState(() {
+        _atrAutoLoading = false;
+        _atrAutoLoaded = true;
+      });
+    } else {
+      setState(() => _atrAutoLoading = false);
+    }
   }
 
   bool get _isFund => _assetType == 'fund';
@@ -135,8 +158,14 @@ class _HarvestCalculatorScreenState extends State<HarvestCalculatorScreen> {
             gridStepController: _gridStepController,
             atrController: _atrController,
             atrMultipleController: _atrMultipleController,
+            atrAutoLoading: _atrAutoLoading,
+            atrAutoLoaded: _atrAutoLoaded,
+            hasStockContext: widget.stockContext?.code != null,
             onAssetTypeChanged: (value) => setState(() => _assetType = value),
-            onModeChanged: (value) => setState(() => _mode = value),
+            onModeChanged: (value) {
+              setState(() => _mode = value);
+              if (value == 'atr') _autoLoadAtr();
+            },
             onChanged: () => setState(() {}),
           ),
           const SizedBox(height: 16),
@@ -264,6 +293,9 @@ class _ConfigCard extends StatelessWidget {
   final TextEditingController gridStepController;
   final TextEditingController atrController;
   final TextEditingController atrMultipleController;
+  final bool atrAutoLoading;
+  final bool atrAutoLoaded;
+  final bool hasStockContext;
   final ValueChanged<String> onAssetTypeChanged;
   final ValueChanged<String> onModeChanged;
   final VoidCallback onChanged;
@@ -277,6 +309,9 @@ class _ConfigCard extends StatelessWidget {
     required this.gridStepController,
     required this.atrController,
     required this.atrMultipleController,
+    required this.atrAutoLoading,
+    required this.atrAutoLoaded,
+    required this.hasStockContext,
     required this.onAssetTypeChanged,
     required this.onModeChanged,
     required this.onChanged,
@@ -363,12 +398,39 @@ class _ConfigCard extends StatelessWidget {
                         controller: gridStepController,
                         onChanged: onChanged,
                       )
-                    : _NumberField(
-                        label: 'ATR',
-                        suffix: '元',
-                        controller: atrController,
-                        decimals: 4,
-                        onChanged: onChanged,
+                    : Stack(
+                        children: [
+                          _NumberField(
+                            label: 'ATR',
+                            suffix: '元',
+                            controller: atrController,
+                            decimals: 4,
+                            onChanged: onChanged,
+                          ),
+                          if (atrAutoLoading)
+                            const Positioned(
+                              right: 0,
+                              top: 20,
+                              child: SizedBox(
+                                width: 14,
+                                height: 14,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: AppTheme.accent,
+                                ),
+                              ),
+                            ),
+                          if (atrAutoLoaded && hasStockContext)
+                            const Positioned(
+                              right: 0,
+                              top: 22,
+                              child: Icon(
+                                Icons.auto_awesome,
+                                size: 13,
+                                color: AppTheme.primaryGreen,
+                              ),
+                            ),
+                        ],
                       ),
               ),
             ],
