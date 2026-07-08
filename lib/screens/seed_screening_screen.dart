@@ -2,478 +2,402 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../models/stock.dart';
+import '../models/stock_context.dart';
 import '../services/stock_api_service.dart';
 import '../theme/app_theme.dart';
+import 'seed_plan_screen.dart';
 
+// 【用户手动录入】标的名称、代码、市场、硬性一票否决开关、播种触发价、最高加仓价、目标收割价
+// 【自动拉取只读】当前价、PE/PB百分位、质押率、负债率、商誉占比、现金流利润比、股息率、分红年数、分红稳定性、K线趋势
 class SeedScreeningScreen extends StatefulWidget {
-  const SeedScreeningScreen({super.key});
+  final StockContext? stockContext;
+
+  const SeedScreeningScreen({super.key, this.stockContext});
 
   @override
   State<SeedScreeningScreen> createState() => _SeedScreeningScreenState();
 }
 
 class _SeedScreeningScreenState extends State<SeedScreeningScreen> {
-  final _codeController = TextEditingController(text: '600519');
-  final _nameController = TextEditingController(text: '观察标的');
-  final _pePercentileController = TextEditingController(text: '35');
-  final _pbPercentileController = TextEditingController(text: '40');
-  final _pledgeRatioController = TextEditingController(text: '10');
-  final _debtRatioController = TextEditingController(text: '45');
-  final _goodwillRatioController = TextEditingController(text: '5');
-  final _cashflowMarginController = TextEditingController(text: '8');
-  final _dividendYieldController = TextEditingController(text: '3');
-  final _dividendYearsController = TextEditingController(text: '5');
-  final _currentPriceController = TextEditingController(text: '10.00');
-  final _buyTriggerController = TextEditingController(text: '9.20');
-  final _harvestTriggerController = TextEditingController(text: '11.50');
-
-  bool _isSt = false;
-  bool _delistRisk = false;
-  bool _violationGuarantee = false;
-  bool _financialFraudRisk = false;
-  bool _isAutoLoading = false;
+  final _codeController         = TextEditingController();
+  final _nameController         = TextEditingController();
+  final _seedPriceController    = TextEditingController();
+  final _maxAddPriceController  = TextEditingController();
+  final _harvestPriceController = TextEditingController();
   String _market = 'SH';
-  String _industryCycle = 'neutral';
-  String _dividendStability = 'stable';
-  String _autoStatus = '输入 A 股代码后可自动拉取行情、估值、K线趋势、质押、财务和分红数据。';
+  bool _isSt = false, _delistRisk = false, _violationGuarantee = false, _financialFraudRisk = false;
+
+  double? _autoPrice;
+  int?    _autoPePct, _autoPbPct;
+  bool    _autoPeEst = false, _autoPbEst = false;
+  double? _autoPledge, _autoDebt, _autoGoodwill, _autoCashflow;
+  double? _autoDivYield;
+  int?    _autoDivYears;
+  String? _autoDivStability, _autoTrend, _autoTrendTip;
+
+  bool   _loading = false;
+  String _status  = '输入A股代码或名称后，点击「自动拉取并排雷」，系统将自动填充行情、估值、财务、分红数据。';
+
+  @override
+  void initState() {
+    super.initState();
+    final ctx = widget.stockContext;
+    if (ctx != null) {
+      if (ctx.code != null) _codeController.text = ctx.code!;
+      if (ctx.name != null) _nameController.text = ctx.name!;
+      if (ctx.market != null) _market = ctx.market!;
+      if (ctx.currentPrice != null && ctx.currentPrice! > 0) {
+        final p = ctx.currentPrice!;
+        _seedPriceController.text = (p * 0.92).toStringAsFixed(2);
+        _harvestPriceController.text = (p * 1.15).toStringAsFixed(2);
+        _maxAddPriceController.text = (p * 0.70).toStringAsFixed(2);
+        _autoPrice = p;
+      }
+      _status = '已从持仓载入「${ctx.name ?? ctx.code ?? ''}」，可直接点击「自动拉取并排雷」更新数据。';
+    }
+  }
 
   @override
   void dispose() {
-    _codeController.dispose();
-    _nameController.dispose();
-    _pePercentileController.dispose();
-    _pbPercentileController.dispose();
-    _pledgeRatioController.dispose();
-    _debtRatioController.dispose();
-    _goodwillRatioController.dispose();
-    _cashflowMarginController.dispose();
-    _dividendYieldController.dispose();
-    _dividendYearsController.dispose();
-    _currentPriceController.dispose();
-    _buyTriggerController.dispose();
-    _harvestTriggerController.dispose();
+    _codeController.dispose(); _nameController.dispose();
+    _seedPriceController.dispose(); _maxAddPriceController.dispose();
+    _harvestPriceController.dispose();
     super.dispose();
   }
 
-  Future<void> _autoScreen() async {
+  Future<void> _autoFetch() async {
     String input = _codeController.text.trim();
-    if (input.isEmpty) {
-      setState(() => _autoStatus = '请先输入股票代码或名称。');
-      return;
-    }
-
-    setState(() {
-      _isAutoLoading = true;
-      _autoStatus = '正在解析标的...';
-    });
-
+    if (input.isEmpty) { setState(() => _status = '请先输入股票代码或名称。'); return; }
+    setState(() { _loading = true; _status = '正在解析标的...'; });
     try {
-      final service = StockApiService();
-
-      // 若输入非纯数字，先通过名称搜索解析出代码和市场
+      final svc = StockApiService();
       if (!RegExp(r'^\d+$').hasMatch(input)) {
-        setState(() => _autoStatus = '正在搜索「$input」...');
-        final results = await service.searchByName(input);
+        setState(() => _status = '正在搜索「$input」...');
+        final hits = await svc.searchByName(input);
         if (!mounted) return;
-        if (results.isEmpty) {
-          setState(() {
-            _isAutoLoading = false;
-            _autoStatus = '未找到「$input」对应的股票，请确认名称或改用代码。';
-          });
+        if (hits.isEmpty) {
+          setState(() { _loading = false; _status = '未找到「$input」，请确认名称或改用六位代码。'; });
           return;
         }
-        final matched = results.first;
-        input = matched.code;
-        setState(() {
-          _codeController.text = matched.code;
-          _nameController.text = matched.name;
-          _market = matched.market;
-          _autoStatus = '已匹配到「${matched.name}」(${matched.code})，正在拉取数据...';
-        });
+        final m = hits.first;
+        input = m.code;
+        _codeController.text = m.code; _nameController.text = m.name; _market = m.market;
+        setState(() => _status = '已匹配「${m.name}」(${m.code})，正在拉取数据...');
       }
-
       final code = input;
-
-      // 并发拉取所有数据，历史百分位单独拉（耗时较长）
-      setState(() => _autoStatus = '正在拉取行情、K线、财务、质押、分红数据...');
-      final results = await Future.wait([
-        service.fetchStockQuote(code, _market),
-        service.fetchKlineDaily(code, _market, limit: 120),
-        service.fetchAutoRiskData(code, _market),
+      setState(() => _status = '正在拉取行情、K线、财务、分红数据...');
+      final fetched = await Future.wait([
+        svc.fetchStockQuote(code, _market),
+        svc.fetchKlineDaily(code, _market, limit: 120),
+        svc.fetchAutoRiskData(code, _market),
       ]);
-
       if (!mounted) return;
-      final stock = results[0] as Stock?;
-      final klines = results[1] as List<Map<String, dynamic>>;
-      final riskData = results[2] as AutoRiskData;
-
+      final stock  = fetched[0] as Stock?;
+      final klines = fetched[1] as List<Map<String, dynamic>>;
+      final risk   = fetched[2] as AutoRiskData;
       if (stock == null) {
-        setState(() {
-          _isAutoLoading = false;
-          _autoStatus = '行情数据未取到，请检查代码和市场是否正确。';
-        });
+        setState(() { _loading = false; _status = '行情未取到，请检查代码和市场是否正确。'; });
         return;
       }
-
-      // 单独拉 PE/PB 历史百分位（接口较慢，拉完再刷新一次）
-      setState(() => _autoStatus = '正在计算 PE/PB 历史百分位...');
-      final percentile = await service.fetchValuationPercentile(code, _market);
+      setState(() => _status = '正在计算PE/PB历史百分位...');
+      final pct = await svc.fetchValuationPercentile(code, _market);
       if (!mounted) return;
-
       final trend = _detectTrend(klines);
-      final price = stock.price > 0 ? stock.price : _currentPrice;
-
-      // 退市风险：名称含"退"或代码进入退市整理（688/4/8开头的特殊板块除外）
-      final nameUpper = stock.name.toUpperCase();
-      final isStFlag = nameUpper.contains('ST');
-      final delistFlag = stock.name.contains('退') ||
-          nameUpper.contains('*ST') ||
-          nameUpper.startsWith('PT');
-
-      // PE/PB 百分位：优先用真实历史百分位，取不到时降级用当前绝对值估算
-      final pePct = percentile.pePercentile ??
-          _fallbackPePercentile(stock.pe);
-      final pbPct = percentile.pbPercentile ??
-          _fallbackPbPercentile(stock.pb);
-
-      final peSource = percentile.pePercentile != null ? '历史百分位' : '估算';
-      final pbSource = percentile.pbPercentile != null ? '历史百分位' : '估算';
-
+      final price = stock.price > 0 ? stock.price : 0.0;
+      final nameU = stock.name.toUpperCase();
+      final autoSt = nameU.contains('ST');
+      final autoDel = stock.name.contains('退') || nameU.contains('*ST') || nameU.startsWith('PT');
+      final pe = pct.pePercentile ?? _fbPe(stock.pe);
+      final pb = pct.pbPercentile ?? _fbPb(stock.pb);
+      final notes = <String>[];
+      notes.add(pct.pePercentile == null ? 'PE百分位为估算值' : 'PE百分位取自历史数据');
+      notes.add(pct.pbPercentile == null ? 'PB百分位为估算值' : 'PB百分位取自历史数据');
+      if (risk.sourceNotes.isNotEmpty) notes.addAll(risk.sourceNotes);
+      else notes.add('财务/质押/分红数据未取到，相关项仍需人工核验');
+      if (autoSt)  notes.add('检测到ST状态，已自动标记');
+      if (autoDel) notes.add('检测到退市风险，已自动标记');
       setState(() {
-        _nameController.text = stock.name.isEmpty ? code : stock.name;
-        _currentPriceController.text =
-            price > 0 ? price.toStringAsFixed(2) : _currentPriceController.text;
-        _pePercentileController.text = pePct.toString();
-        _pbPercentileController.text = pbPct.toString();
-        _buyTriggerController.text = price > 0
-            ? (price * 0.92).toStringAsFixed(2)
-            : _buyTriggerController.text;
-        _harvestTriggerController.text = price > 0
-            ? (price * 1.15).toStringAsFixed(2)
-            : _harvestTriggerController.text;
-        _isSt = isStFlag;
-        _delistRisk = delistFlag;
-        if (riskData.pledgeRatio != null) {
-          _pledgeRatioController.text =
-              riskData.pledgeRatio!.toStringAsFixed(2);
-        }
-        if (riskData.debtRatio != null) {
-          _debtRatioController.text = riskData.debtRatio!.toStringAsFixed(2);
-        }
-        if (riskData.goodwillRatio != null) {
-          _goodwillRatioController.text =
-              riskData.goodwillRatio!.toStringAsFixed(2);
-        }
-        if (riskData.cashflowMargin != null) {
-          _cashflowMarginController.text =
-              riskData.cashflowMargin!.toStringAsFixed(2);
-        }
-        if (riskData.dividendYield != null) {
-          _dividendYieldController.text =
-              riskData.dividendYield!.toStringAsFixed(2);
-        }
-        if (riskData.dividendYears != null) {
-          _dividendYearsController.text = riskData.dividendYears!.toString();
-        }
-        if (riskData.dividendStability != null) {
-          _dividendStability = riskData.dividendStability!;
-        }
-        _industryCycle = trend;
-        _isAutoLoading = false;
-
-        final notes = <String>[
-          'PE百分位=$pePct%($peSource)',
-          'PB百分位=$pbPct%($pbSource)',
-          if (isStFlag) 'ST状态已标记',
-          if (delistFlag) '退市风险已标记',
-        ];
-        final deepNotes = riskData.sourceNotes.isEmpty
-            ? ['财务/质押/分红数据未取到，相关项仍需人工核验']
-            : riskData.sourceNotes;
-        _autoStatus = '自动填充完成。${[...notes, ...deepNotes].join('，')}。';
+        if (stock.name.isNotEmpty) _nameController.text = stock.name;
+        _autoPrice = price > 0 ? price : null;
+        _autoPePct = pe; _autoPbPct = pb;
+        _autoPeEst = pct.pePercentile == null; _autoPbEst = pct.pbPercentile == null;
+        _autoPledge = risk.pledgeRatio; _autoDebt = risk.debtRatio;
+        _autoGoodwill = risk.goodwillRatio; _autoCashflow = risk.cashflowMargin;
+        _autoDivYield = risk.dividendYield; _autoDivYears = risk.dividendYears;
+        _autoDivStability = risk.dividendStability;
+        _autoTrend = trend; _autoTrendTip = _trendTip(trend, klines);
+        if (autoSt)  _isSt       = true;
+        if (autoDel) _delistRisk = true;
+        if (_seedPriceController.text.isEmpty && price > 0)
+          _seedPriceController.text = (price * 0.92).toStringAsFixed(2);
+        if (_harvestPriceController.text.isEmpty && price > 0)
+          _harvestPriceController.text = (price * 1.20).toStringAsFixed(2);
+        _loading = false;
+        _status = '自动填充完成。${notes.join('；')}。';
       });
     } catch (e) {
       if (!mounted) return;
-      setState(() {
-        _isAutoLoading = false;
-        _autoStatus = '自动拉取失败：$e';
-      });
+      setState(() { _loading = false; _status = '拉取失败：$e'; });
     }
   }
 
-  /// 真实百分位取不到时的绝对值降级估算（标注为估算）
-  int _fallbackPePercentile(double pe) {
-    if (pe <= 0) return 50;
-    if (pe <= 10) return 15;
-    if (pe <= 15) return 25;
-    if (pe <= 25) return 45;
-    if (pe <= 40) return 70;
-    return 90;
-  }
+  int _fbPe(double v) { if (v<=0) return 50; if (v<=10) return 15; if (v<=15) return 25; if (v<=25) return 45; if (v<=40) return 70; return 90; }
+  int _fbPb(double v) { if (v<=0) return 50; if (v<=1) return 20; if (v<=1.8) return 35; if (v<=3) return 55; if (v<=5) return 75; return 90; }
 
-  int _fallbackPbPercentile(double pb) {
-    if (pb <= 0) return 50;
-    if (pb <= 1) return 20;
-    if (pb <= 1.8) return 35;
-    if (pb <= 3) return 55;
-    if (pb <= 5) return 75;
-    return 90;
-  }
-
-  String _detectTrend(List<Map<String, dynamic>> klines) {
-    if (klines.length < 60) return 'neutral';
-    final recent = ((klines.last['close'] ?? 0.0) as num).toDouble();
-    final mid =
-        ((klines[klines.length - 30]['close'] ?? 0.0) as num).toDouble();
-    final far =
-        ((klines[klines.length - 60]['close'] ?? 0.0) as num).toDouble();
-    if (recent <= 0 || mid <= 0 || far <= 0) return 'neutral';
-    final change30 = (recent - mid) / mid;
-    final change60 = (recent - far) / far;
-    if (change30 > 0.08 && change60 > 0.12) return 'up';
-    if (change30 < -0.08 && change60 < -0.12) return 'down';
+  String _detectTrend(List<Map<String, dynamic>> k) {
+    if (k.length < 60) return 'neutral';
+    final r = ((k.last['close'] ?? 0.0) as num).toDouble();
+    final m = ((k[k.length-30]['close'] ?? 0.0) as num).toDouble();
+    final f = ((k[k.length-60]['close'] ?? 0.0) as num).toDouble();
+    if (r<=0||m<=0||f<=0) return 'neutral';
+    if ((r-m)/m>0.08&&(r-f)/f>0.12) return 'up';
+    if ((r-m)/m<-0.08&&(r-f)/f<-0.12) return 'down';
     return 'neutral';
   }
 
-  double get _pePercentile =>
-      double.tryParse(_pePercentileController.text) ?? 0;
-  double get _pbPercentile =>
-      double.tryParse(_pbPercentileController.text) ?? 0;
-  double get _pledgeRatio => double.tryParse(_pledgeRatioController.text) ?? 0;
-  double get _debtRatio => double.tryParse(_debtRatioController.text) ?? 0;
-  double get _goodwillRatio =>
-      double.tryParse(_goodwillRatioController.text) ?? 0;
-  double get _cashflowMargin =>
-      double.tryParse(_cashflowMarginController.text) ?? 0;
-  double get _dividendYield =>
-      double.tryParse(_dividendYieldController.text) ?? 0;
-  int get _dividendYears => int.tryParse(_dividendYearsController.text) ?? 0;
-  double get _currentPrice =>
-      double.tryParse(_currentPriceController.text) ?? 0;
-  double get _buyTrigger => double.tryParse(_buyTriggerController.text) ?? 0;
-  double get _harvestTrigger =>
-      double.tryParse(_harvestTriggerController.text) ?? 0;
+  String _trendTip(String t, List<Map<String, dynamic>> k) {
+    if (k.length < 60) return '历史K线不足，无法判断趋势';
+    if (t=='up')   return '近60日价格持续上行，注意估值是否偏贵，控制仓位';
+    if (t=='down') return '近60日价格持续下行，判断是否进入播种区间';
+    return '近60日价格震荡，趋势中性，关注估值百分位';
+  }
 
   _ScreeningResult get _result {
-    final hardBlocks = <String>[];
-    final warnings = <String>[];
-    final strengths = <String>[];
-    var score = 100;
+    final hard=<String>[], warn=<String>[], str=<String>[];
+    var s = 100;
+    if (_isSt)               hard.add('ST/*ST 标的，禁止播种');
+    if (_delistRisk)         hard.add('存在退市风险，禁止播种');
+    if (_violationGuarantee) hard.add('存在违规担保风险，禁止播种');
+    if (_financialFraudRisk) hard.add('存在财务造假风险，禁止播种');
+    if (_autoCashflow!=null&&_autoCashflow!<0) hard.add('经营现金流为负，禁止播种');
+    if (_autoPledge!=null&&_autoPledge!>=50)   hard.add('大股东质押率≥50%，禁止播种');
+    if (_autoPledge!=null) {
+      if (_autoPledge!>=30) { s-=18; warn.add('大股东质押率偏高（${_autoPledge!.toStringAsFixed(1)}%），需降低仓位上限'); }
+      else if (_autoPledge!<10) { s+=5; str.add('大股东质押率极低（${_autoPledge!.toStringAsFixed(1)}%）'); }
+    }
+    if (_autoDebt!=null) {
+      if (_autoDebt!>=70) { s-=18; warn.add('资产负债率偏高（${_autoDebt!.toStringAsFixed(1)}%）'); }
+      else if (_autoDebt!<=45) { s+=5; str.add('资产负债率健康（${_autoDebt!.toStringAsFixed(1)}%）'); }
+    }
+    if (_autoGoodwill!=null) {
+      if (_autoGoodwill!>=30) { s-=15; warn.add('商誉/净资产偏高（${_autoGoodwill!.toStringAsFixed(1)}%），防减值风险'); }
+      else if (_autoGoodwill!<5) { s+=3; str.add('商誉占比极低（${_autoGoodwill!.toStringAsFixed(1)}%）'); }
+    }
+    if (_autoCashflow!=null) {
+      if (_autoCashflow!<5) { s-=15; warn.add('经营现金流/净利润偏低（${_autoCashflow!.toStringAsFixed(1)}%），盈利质量存疑'); }
+      else { s+=8; str.add('经营现金流质量良好（${_autoCashflow!.toStringAsFixed(1)}%）'); }
+    }
+    if (_autoPePct!=null) {
+      if (_autoPePct!<=30) { s+=10; str.add('PE处于历史低位（${_autoPePct}分位${_autoPeEst?"，估算":""}）'); }
+      else if (_autoPePct!>=80) { s-=20; warn.add('PE处于历史高位（${_autoPePct}分位${_autoPeEst?"，估算":""}），播种性价比下降'); }
+    }
+    if (_autoPbPct!=null) {
+      if (_autoPbPct!<=30) { s+=8; str.add('PB处于历史低位（${_autoPbPct}分位${_autoPbEst?"，估算":""}）'); }
+      else if (_autoPbPct!>=80) { s-=15; warn.add('PB处于历史高位（${_autoPbPct}分位${_autoPbEst?"，估算":""}）'); }
+    }
+    if (_autoDivYield!=null&&_autoDivYield!>=3&&(_autoDivYears??0)>=5) {
+      s+=15; str.add('股息率高（${_autoDivYield!.toStringAsFixed(2)}%）且连续分红${_autoDivYears}年，灌溉能力强');
+    } else if (_autoDivYield==null||_autoDivYield!<1) {
+      s-=10; warn.add('无分红或股息率极低，灌溉能力不足');
+    }
+    if (_autoDivStability=='unstable') { s-=12; warn.add('历史分红不稳定'); }
+    else if (_autoDivStability=='stable') { s+=8; str.add('历史分红稳定'); }
+    if (_autoTrend=='up')   { s+=5;  str.add('近期K线趋势向上'); }
+    if (_autoTrend=='down') { s-=10; warn.add('近期K线趋势向下，注意是否进入播种区间'); }
+    s = s.clamp(0, 100);
 
-    if (_isSt) hardBlocks.add('ST/*ST 标的禁止播种');
-    if (_delistRisk) hardBlocks.add('存在退市风险，禁止播种');
-    if (_violationGuarantee) hardBlocks.add('存在违规担保风险，禁止播种');
-    if (_financialFraudRisk) hardBlocks.add('存在财务造假风险，禁止播种');
-    if (_cashflowMargin < 0) hardBlocks.add('经营现金流为负，禁止播种');
-    if (_pledgeRatio >= 50) hardBlocks.add('质押率超过 50%，禁止播种');
+    final alerts=<String>[];
+    final cur=_autoPrice??0.0;
+    final seed=double.tryParse(_seedPriceController.text)??0.0;
+    final maxA=double.tryParse(_maxAddPriceController.text)??0.0;
+    final harv=double.tryParse(_harvestPriceController.text)??0.0;
+    if (cur>0&&seed>0&&cur<=seed) alerts.add('当前价（${cur.toStringAsFixed(2)}）≤ 播种触发线（${seed.toStringAsFixed(2)}），可按计划播种');
+    if (cur>0&&maxA>0&&cur>=maxA) alerts.add('当前价（${cur.toStringAsFixed(2)}）≥ 最高加仓线（${maxA.toStringAsFixed(2)}），禁止继续加仓');
+    if (cur>0&&harv>0&&cur>=harv) alerts.add('当前价（${cur.toStringAsFixed(2)}）≥ 目标收割价（${harv.toStringAsFixed(2)}），可考虑分批收割');
+    if (alerts.isEmpty) alerts.add('暂未触发价格提醒，继续观察计划价位');
 
-    if (_pledgeRatio >= 30) {
-      score -= 18;
-      warnings.add('质押率偏高，需降低仓位上限');
-    }
-    if (_debtRatio >= 70) {
-      score -= 18;
-      warnings.add('资产负债率偏高');
-    } else if (_debtRatio <= 45) {
-      score += 5;
-      strengths.add('负债率相对可控');
-    }
-    if (_goodwillRatio >= 30) {
-      score -= 15;
-      warnings.add('商誉占比偏高，需防减值风险');
-    }
-    if (_cashflowMargin < 5) {
-      score -= 15;
-      warnings.add('经营现金流质量偏弱');
-    } else {
-      score += 8;
-      strengths.add('现金流质量较好');
-    }
-
-    if (_pePercentile <= 30) {
-      score += 10;
-      strengths.add('PE 百分位处于低位区');
-    } else if (_pePercentile >= 80) {
-      score -= 20;
-      warnings.add('PE 百分位过高，播种性价比下降');
-    }
-    if (_pbPercentile <= 30) {
-      score += 8;
-      strengths.add('PB 百分位处于低位区');
-    } else if (_pbPercentile >= 80) {
-      score -= 15;
-      warnings.add('PB 百分位过高');
-    }
-
-    if (_dividendYield >= 3 && _dividendYears >= 5) {
-      score += 15;
-      strengths.add('股息率和分红连续性较好');
-    } else if (_dividendYield < 1 || _dividendYears == 0) {
-      score -= 12;
-      warnings.add('分红灌溉能力不足');
-    }
-
-    if (_dividendStability == 'unstable') {
-      score -= 12;
-      warnings.add('分红不稳定');
-    } else if (_dividendStability == 'stable') {
-      score += 8;
-      strengths.add('分红稳定性较高');
-    }
-
-    if (_industryCycle == 'up') {
-      score += 8;
-      strengths.add('行业周期向上');
-    } else if (_industryCycle == 'down') {
-      score -= 12;
-      warnings.add('行业周期向下');
-    }
-
-    score = score.clamp(0, 100);
-
-    final priceAlerts = <String>[];
-    if (_currentPrice > 0 && _buyTrigger > 0 && _currentPrice <= _buyTrigger) {
-      priceAlerts.add('播种提醒：当前价已触及或低于播种触发线');
-    }
-    if (_currentPrice > 0 &&
-        _harvestTrigger > 0 &&
-        _currentPrice >= _harvestTrigger) {
-      priceAlerts.add('收割提醒：当前价已触及或高于回收触发线');
-    }
-    if (priceAlerts.isEmpty) {
-      priceAlerts.add('未触发价格提醒，继续观察计划价位');
-    }
-
-    if (hardBlocks.isNotEmpty) {
-      return _ScreeningResult(
-        score: 0,
-        level: '禁止播种',
-        color: AppTheme.riskRed,
-        hardBlocks: hardBlocks,
-        warnings: warnings,
-        strengths: strengths,
-        priceAlerts: priceAlerts,
-      );
-    }
-
-    if (score >= 85) {
-      return _ScreeningResult(
-        score: score,
-        level: '适合播种',
-        color: AppTheme.primaryGreen,
-        hardBlocks: hardBlocks,
-        warnings: warnings,
-        strengths: strengths,
-        priceAlerts: priceAlerts,
-      );
-    }
-    if (score >= 70) {
-      return _ScreeningResult(
-        score: score,
-        level: '可小额播种',
-        color: AppTheme.accentGold,
-        hardBlocks: hardBlocks,
-        warnings: warnings,
-        strengths: strengths,
-        priceAlerts: priceAlerts,
-      );
-    }
-    if (score >= 50) {
-      return _ScreeningResult(
-        score: score,
-        level: '谨慎观察',
-        color: AppTheme.accent,
-        hardBlocks: hardBlocks,
-        warnings: warnings,
-        strengths: strengths,
-        priceAlerts: priceAlerts,
-      );
-    }
-    return _ScreeningResult(
-      score: score,
-      level: '暂不播种',
-      color: AppTheme.riskRed,
-      hardBlocks: hardBlocks,
-      warnings: warnings,
-      strengths: strengths,
-      priceAlerts: priceAlerts,
-    );
+    if (hard.isNotEmpty) return _ScreeningResult(score:0,level:'禁止播种',color:AppTheme.riskRed,hardBlocks:hard,warnings:warn,strengths:str,priceAlerts:alerts);
+    if (s>=85) return _ScreeningResult(score:s,level:'适合播种',  color:AppTheme.primaryGreen,hardBlocks:hard,warnings:warn,strengths:str,priceAlerts:alerts);
+    if (s>=70) return _ScreeningResult(score:s,level:'可小额播种',color:AppTheme.accentGold,  hardBlocks:hard,warnings:warn,strengths:str,priceAlerts:alerts);
+    if (s>=50) return _ScreeningResult(score:s,level:'谨慎观察',  color:AppTheme.accent,      hardBlocks:hard,warnings:warn,strengths:str,priceAlerts:alerts);
+    return _ScreeningResult(score:s,level:'暂不播种',color:AppTheme.riskRed,hardBlocks:hard,warnings:warn,strengths:str,priceAlerts:alerts);
   }
 
   @override
   Widget build(BuildContext context) {
     final result = _result;
-
     return Scaffold(
       appBar: AppBar(title: const Text('排雷')),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 88),
         children: [
-          _AutoScreenCard(
+          // ① 标的输入 + 自动拉取
+          _AutoFetchCard(
             codeController: _codeController,
             nameController: _nameController,
             market: _market,
-            isLoading: _isAutoLoading,
-            status: _autoStatus,
+            isLoading: _loading,
+            status: _status,
             onChanged: () => setState(() {}),
-            onMarketChanged: (market) => setState(() => _market = market),
-            onFetch: _autoScreen,
+            onMarketChanged: (v) => setState(() => _market = v),
+            onFetch: _autoFetch,
           ),
           const SizedBox(height: 16),
+          // ② 综合评分结果
           _ResultCard(result: result, name: _nameController.text),
           const SizedBox(height: 16),
-          _BasicInfoCard(
-            pePercentileController: _pePercentileController,
-            pbPercentileController: _pbPercentileController,
-            onChanged: () => setState(() {}),
+          // ③ 自动拉取：行情 + 估值百分位
+          _SectionLabel(label: '自动拉取数据', icon: Icons.cloud_done_outlined, color: AppTheme.accent),
+          const SizedBox(height: 8),
+          _AutoDataCard(
+            price: _autoPrice,
+            pePct: _autoPePct, pbPct: _autoPbPct,
+            peEst: _autoPeEst, pbEst: _autoPbEst,
+            trend: _autoTrend, trendTip: _autoTrendTip,
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 8),
+          // ④ 自动拉取：财务安全
+          _FinancialAutoCard(
+            pledge: _autoPledge, debt: _autoDebt,
+            goodwill: _autoGoodwill, cashflow: _autoCashflow,
+          ),
+          const SizedBox(height: 8),
+          // ⑤ 自动拉取：分红灌溉
+          _DividendAutoCard(
+            yield_: _autoDivYield,
+            years: _autoDivYears,
+            stability: _autoDivStability,
+          ),
+          const SizedBox(height: 16),
+          // ⑥ 用户录入：硬性一票否决
+          _SectionLabel(label: '用户录入字段', icon: Icons.edit_outlined, color: AppTheme.accentGold),
+          const SizedBox(height: 8),
           _HardFilterCard(
-            isSt: _isSt,
-            delistRisk: _delistRisk,
-            violationGuarantee: _violationGuarantee,
-            financialFraudRisk: _financialFraudRisk,
+            isSt: _isSt, delistRisk: _delistRisk,
+            violationGuarantee: _violationGuarantee, financialFraudRisk: _financialFraudRisk,
             onStChanged: (v) => setState(() => _isSt = v),
             onDelistChanged: (v) => setState(() => _delistRisk = v),
             onGuaranteeChanged: (v) => setState(() => _violationGuarantee = v),
             onFraudChanged: (v) => setState(() => _financialFraudRisk = v),
           ),
-          const SizedBox(height: 12),
-          _FinancialQualityCard(
-            pledgeRatioController: _pledgeRatioController,
-            debtRatioController: _debtRatioController,
-            goodwillRatioController: _goodwillRatioController,
-            cashflowMarginController: _cashflowMarginController,
-            onChanged: () => setState(() {}),
-          ),
-          const SizedBox(height: 12),
-          _DividendCard(
-            dividendYieldController: _dividendYieldController,
-            dividendYearsController: _dividendYearsController,
-            stability: _dividendStability,
-            onStabilityChanged: (v) => setState(() => _dividendStability = v),
-            onChanged: () => setState(() {}),
-          ),
-          const SizedBox(height: 12),
-          _CycleCard(
-            cycle: _industryCycle,
-            onChanged: (v) => setState(() => _industryCycle = v),
-          ),
-          const SizedBox(height: 12),
-          _AlertCard(
-            currentPriceController: _currentPriceController,
-            buyTriggerController: _buyTriggerController,
-            harvestTriggerController: _harvestTriggerController,
+          const SizedBox(height: 8),
+          // ⑦ 用户录入：播种计划价
+          _SeedPlanCard(
+            seedPriceController: _seedPriceController,
+            maxAddPriceController: _maxAddPriceController,
+            harvestPriceController: _harvestPriceController,
             alerts: result.priceAlerts,
             onChanged: () => setState(() {}),
           ),
+          const SizedBox(height: 16),
+          // ⑧ 流程跳转：制定播种计划
+          if (result.level != '禁止播种')
+            _ProceedToSeedButton(
+              result: result,
+              onTap: () {
+                final price = double.tryParse(_seedPriceController.text);
+                final ctx = StockContext(
+                  code: _codeController.text.trim().isEmpty
+                      ? null
+                      : _codeController.text.trim(),
+                  name: _nameController.text.trim().isEmpty
+                      ? null
+                      : _nameController.text.trim(),
+                  assetType: 'stock',
+                  market: _market,
+                  pePercentile: _autoPePct?.toDouble(),
+                  pbPercentile: _autoPbPct?.toDouble(),
+                  industryCycle: _autoTrend,
+                  currentPrice: price ?? _autoPrice,
+                );
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => SeedPlanScreen(stockContext: ctx),
+                  ),
+                );
+              },
+            ),
         ],
       ),
     );
   }
 }
 
-class _AutoScreenCard extends StatefulWidget {
+// ── 排雷完成后跳转播种计划 ────────────────────────────────────────────────────
+class _ProceedToSeedButton extends StatelessWidget {
+  final _ScreeningResult result;
+  final VoidCallback onTap;
+  const _ProceedToSeedButton({required this.result, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final isGood = result.level == '适合播种';
+    return SizedBox(
+      width: double.infinity,
+      height: 52,
+      child: ElevatedButton.icon(
+        onPressed: onTap,
+        icon: const Icon(Icons.grass_outlined, size: 18),
+        label: Text(
+          isGood ? '排雷通过 · 制定播种计划' : '查看播种计划（谨慎）',
+          style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+        ),
+        style: ElevatedButton.styleFrom(
+          backgroundColor:
+              isGood ? AppTheme.primaryGreen : AppTheme.accentGold,
+          foregroundColor: Colors.white,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ── 区块标题 ──────────────────────────────────────────────────────────────────
+class _SectionLabel extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final Color color;
+  const _SectionLabel({required this.label, required this.icon, required this.color});
+  @override
+  Widget build(BuildContext context) {
+    return Row(children: [
+      Icon(icon, size: 15, color: color),
+      const SizedBox(width: 6),
+      Text(label, style: TextStyle(color: color, fontSize: 13, fontWeight: FontWeight.w700)),
+    ]);
+  }
+}
+
+// ── 通用卡片容器 ──────────────────────────────────────────────────────────────
+class _Card extends StatelessWidget {
+  final String title;
+  final List<Widget> children;
+  final Color? borderColor;
+  const _Card({required this.title, required this.children, this.borderColor});
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppTheme.bgCard,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: borderColor ?? AppTheme.borderColor, width: 0.5),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(title, style: const TextStyle(color: AppTheme.textPrimary, fontSize: 15, fontWeight: FontWeight.w700)),
+        const SizedBox(height: 14),
+        ...children,
+      ]),
+    );
+  }
+}
+
+// ── ① 自动拉取卡 ──────────────────────────────────────────────────────────────
+class _AutoFetchCard extends StatefulWidget {
   final TextEditingController codeController;
   final TextEditingController nameController;
   final String market;
@@ -482,98 +406,58 @@ class _AutoScreenCard extends StatefulWidget {
   final VoidCallback onChanged;
   final ValueChanged<String> onMarketChanged;
   final VoidCallback onFetch;
-
-  const _AutoScreenCard({
-    required this.codeController,
-    required this.nameController,
-    required this.market,
-    required this.isLoading,
-    required this.status,
-    required this.onChanged,
-    required this.onMarketChanged,
-    required this.onFetch,
+  const _AutoFetchCard({
+    required this.codeController, required this.nameController,
+    required this.market, required this.isLoading, required this.status,
+    required this.onChanged, required this.onMarketChanged, required this.onFetch,
   });
-
   @override
-  State<_AutoScreenCard> createState() => _AutoScreenCardState();
+  State<_AutoFetchCard> createState() => _AutoFetchCardState();
 }
 
-class _AutoScreenCardState extends State<_AutoScreenCard> {
-  List<Stock> _suggestions = [];
+class _AutoFetchCardState extends State<_AutoFetchCard> {
+  List<Stock> _sugg = [];
   bool _searching = false;
-  OverlayEntry? _overlayEntry;
-  final LayerLink _layerLink = LayerLink();
+  OverlayEntry? _ov;
+  final _link = LayerLink();
 
-  bool get _isCodeInput =>
-      RegExp(r'^\d+$').hasMatch(widget.codeController.text.trim());
-
-  Future<void> _onCodeChanged(String value) async {
+  Future<void> _onCode(String v) async {
     widget.onChanged();
-    _removeOverlay();
-    final trimmed = value.trim();
-    if (trimmed.isEmpty || _isCodeInput) {
-      setState(() => _suggestions = []);
-      return;
-    }
-    if (trimmed.length < 1) return;
-
+    _ov?.remove(); _ov = null;
+    final t = v.trim();
+    if (t.isEmpty || RegExp(r'^\d+$').hasMatch(t)) { setState(() => _sugg = []); return; }
     setState(() => _searching = true);
-    final results = await StockApiService().searchByName(trimmed);
+    final r = await StockApiService().searchByName(t);
     if (!mounted) return;
-    setState(() {
-      _suggestions = results;
-      _searching = false;
-    });
-    if (results.isNotEmpty) _showOverlay();
+    setState(() { _sugg = r; _searching = false; });
+    if (r.isNotEmpty) _showOv();
   }
 
-  void _selectSuggestion(Stock stock) {
-    widget.codeController.text = stock.code;
-    widget.nameController.text = stock.name;
-    widget.onMarketChanged(stock.market);
+  void _select(Stock s) {
+    widget.codeController.text = s.code;
+    widget.nameController.text = s.name;
+    widget.onMarketChanged(s.market);
     widget.onChanged();
-    setState(() => _suggestions = []);
-    _removeOverlay();
+    setState(() => _sugg = []);
+    _ov?.remove(); _ov = null;
   }
 
-  void _showOverlay() {
-    _removeOverlay();
-    final overlay = Overlay.of(context);
-    _overlayEntry = OverlayEntry(
-      builder: (ctx) => Positioned(
-        width: _getFieldWidth(),
-        child: CompositedTransformFollower(
-          link: _layerLink,
-          showWhenUnlinked: false,
-          offset: const Offset(0, 52),
-          child: _SuggestionDropdown(
-            suggestions: _suggestions,
-            onSelect: _selectSuggestion,
-            onDismiss: _removeOverlay,
-          ),
-        ),
-      ),
-    );
-    overlay.insert(_overlayEntry!);
-  }
-
-  double _getFieldWidth() {
+  void _showOv() {
+    _ov?.remove();
     final box = context.findRenderObject() as RenderBox?;
-    if (box == null) return 200;
-    // approximate: half width minus padding and gap
-    return (box.size.width - 32 - 12) / 2;
-  }
-
-  void _removeOverlay() {
-    _overlayEntry?.remove();
-    _overlayEntry = null;
+    final w = box != null ? (box.size.width - 32 - 12) / 2 : 180.0;
+    _ov = OverlayEntry(builder: (_) => Positioned(
+      width: w,
+      child: CompositedTransformFollower(
+        link: _link, showWhenUnlinked: false, offset: const Offset(0, 52),
+        child: _SuggDrop(suggestions: _sugg, onSelect: _select, onDismiss: () { _ov?.remove(); _ov = null; }),
+      ),
+    ));
+    Overlay.of(context).insert(_ov!);
   }
 
   @override
-  void dispose() {
-    _removeOverlay();
-    super.dispose();
-  }
+  void dispose() { _ov?.remove(); super.dispose(); }
 
   @override
   Widget build(BuildContext context) {
@@ -584,145 +468,74 @@ class _AutoScreenCardState extends State<_AutoScreenCard> {
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: AppTheme.accent.withValues(alpha: 0.35)),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            '自动排雷数据源',
-            style: TextStyle(
-              color: AppTheme.textPrimary,
-              fontSize: 15,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(height: 12),
-          _TextFieldLine(
-            label: '标的名称',
-            controller: widget.nameController,
-            hint: '例：润和软件 / 沪深300ETF',
-            onChanged: widget.onChanged,
-          ),
-          const SizedBox(height: 12),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      '股票代码 / 名称',
-                      style: TextStyle(
-                        color: AppTheme.textSecondary,
-                        fontSize: 12,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    CompositedTransformTarget(
-                      link: _layerLink,
-                      child: TextField(
-                        controller: widget.codeController,
-                        keyboardType: TextInputType.text,
-                        style: const TextStyle(
-                          color: AppTheme.textPrimary,
-                          fontSize: 14,
-                        ),
-                        decoration: InputDecoration(
-                          hintText: '代码或名称',
-                          suffixIcon: _searching
-                              ? const Padding(
-                                  padding: EdgeInsets.all(12),
-                                  child: SizedBox(
-                                    width: 14,
-                                    height: 14,
-                                    child: CircularProgressIndicator(
-                                        strokeWidth: 1.5),
-                                  ),
-                                )
-                              : null,
-                        ),
-                        onChanged: _onCodeChanged,
-                        onTap: () {
-                          if (_suggestions.isNotEmpty) _showOverlay();
-                        },
-                      ),
-                    ),
-                  ],
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const Text('自动排雷数据源', style: TextStyle(color: AppTheme.textPrimary, fontSize: 15, fontWeight: FontWeight.w700)),
+        const SizedBox(height: 12),
+        _FieldLabel('标的名称'),
+        const SizedBox(height: 6),
+        TextField(
+          controller: widget.nameController,
+          onChanged: (_) => widget.onChanged(),
+          style: const TextStyle(color: AppTheme.textPrimary, fontSize: 14),
+          decoration: const InputDecoration(hintText: '例：贵州茅台'),
+        ),
+        const SizedBox(height: 12),
+        Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            _FieldLabel('股票代码 / 名称'),
+            const SizedBox(height: 6),
+            CompositedTransformTarget(
+              link: _link,
+              child: TextField(
+                controller: widget.codeController,
+                style: const TextStyle(color: AppTheme.textPrimary, fontSize: 14),
+                decoration: InputDecoration(
+                  hintText: '代码或名称',
+                  suffixIcon: _searching ? const Padding(padding: EdgeInsets.all(12), child: SizedBox(width:14,height:14,child:CircularProgressIndicator(strokeWidth:1.5))) : null,
                 ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      '市场',
-                      style: TextStyle(
-                        color: AppTheme.textSecondary,
-                        fontSize: 12,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    _ThreeChoice(
-                      labels: const ['沪市', '深市'],
-                      values: const ['SH', 'SZ'],
-                      selected: widget.market,
-                      onChanged: widget.onMarketChanged,
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 14),
-          SizedBox(
-            width: double.infinity,
-            height: 46,
-            child: ElevatedButton.icon(
-              onPressed: widget.isLoading ? null : widget.onFetch,
-              icon: widget.isLoading
-                  ? const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.cloud_sync_outlined, size: 18),
-              label: Text(widget.isLoading ? '自动排雷中' : '自动拉取并排雷'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppTheme.accent,
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10),
-                ),
+                onChanged: _onCode,
+                onTap: () { if (_sugg.isNotEmpty) _showOv(); },
               ),
             ),
-          ),
-          const SizedBox(height: 10),
-          Text(
-            widget.status,
-            style: const TextStyle(
-              color: AppTheme.textSecondary,
-              fontSize: 12,
-              height: 1.35,
+          ])),
+          const SizedBox(width: 12),
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            _FieldLabel('市场'),
+            const SizedBox(height: 6),
+            _TogglePair(
+              labels: const ['沪市', '深市'], values: const ['SH', 'SZ'],
+              selected: widget.market, onChanged: widget.onMarketChanged,
+            ),
+          ])),
+        ]),
+        const SizedBox(height: 14),
+        SizedBox(
+          width: double.infinity, height: 46,
+          child: ElevatedButton.icon(
+            onPressed: widget.isLoading ? null : widget.onFetch,
+            icon: widget.isLoading
+                ? const SizedBox(width:16,height:16,child:CircularProgressIndicator(strokeWidth:2))
+                : const Icon(Icons.cloud_sync_outlined, size: 18),
+            label: Text(widget.isLoading ? '自动排雷中...' : '自动拉取并排雷'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppTheme.accent, foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
             ),
           ),
-        ],
-      ),
+        ),
+        const SizedBox(height: 10),
+        Text(widget.status, style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12, height: 1.35)),
+      ]),
     );
   }
 }
 
-class _SuggestionDropdown extends StatelessWidget {
+// ── 搜索下拉 ──────────────────────────────────────────────────────────────────
+class _SuggDrop extends StatelessWidget {
   final List<Stock> suggestions;
   final ValueChanged<Stock> onSelect;
   final VoidCallback onDismiss;
-
-  const _SuggestionDropdown({
-    required this.suggestions,
-    required this.onSelect,
-    required this.onDismiss,
-  });
-
+  const _SuggDrop({required this.suggestions, required this.onSelect, required this.onDismiss});
   @override
   Widget build(BuildContext context) {
     return Material(
@@ -733,69 +546,29 @@ class _SuggestionDropdown extends StatelessWidget {
           color: AppTheme.bgCard,
           borderRadius: BorderRadius.circular(10),
           border: Border.all(color: AppTheme.accent.withValues(alpha: 0.4)),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.4),
-              blurRadius: 12,
-              offset: const Offset(0, 4),
-            ),
-          ],
+          boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.4), blurRadius: 12, offset: const Offset(0, 4))],
         ),
         child: ListView.separated(
-          padding: EdgeInsets.zero,
-          shrinkWrap: true,
+          padding: EdgeInsets.zero, shrinkWrap: true,
           itemCount: suggestions.length,
-          separatorBuilder: (_, __) => Divider(
-            height: 1,
-            color: AppTheme.borderColor,
-          ),
-          itemBuilder: (ctx, i) {
+          separatorBuilder: (_, __) => Divider(height: 1, color: AppTheme.borderColor),
+          itemBuilder: (_, i) {
             final s = suggestions[i];
             return InkWell(
-              borderRadius: BorderRadius.circular(10),
-              onTap: () => onSelect(s),
+              borderRadius: BorderRadius.circular(10), onTap: () => onSelect(s),
               child: Padding(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        s.name,
-                        style: const TextStyle(
-                          color: AppTheme.textPrimary,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      s.code,
-                      style: const TextStyle(
-                        color: AppTheme.textSecondary,
-                        fontSize: 12,
-                      ),
-                    ),
-                    const SizedBox(width: 6),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 5, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: AppTheme.accent.withValues(alpha: 0.15),
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: Text(
-                        s.market,
-                        style: TextStyle(
-                          color: AppTheme.accent,
-                          fontSize: 10,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                child: Row(children: [
+                  Expanded(child: Text(s.name, style: const TextStyle(color: AppTheme.textPrimary, fontSize: 13, fontWeight: FontWeight.w600))),
+                  const SizedBox(width: 8),
+                  Text(s.code, style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+                  const SizedBox(width: 6),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                    decoration: BoxDecoration(color: AppTheme.accent.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(4)),
+                    child: Text(s.market, style: TextStyle(color: AppTheme.accent, fontSize: 10, fontWeight: FontWeight.w700)),
+                  ),
+                ]),
               ),
             );
           },
@@ -805,620 +578,500 @@ class _SuggestionDropdown extends StatelessWidget {
   }
 }
 
+// ── 综合结果卡 ────────────────────────────────────────────────────────────────
 class _ResultCard extends StatelessWidget {
   final _ScreeningResult result;
   final String name;
-
   const _ResultCard({required this.result, required this.name});
-
   @override
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
         gradient: LinearGradient(
-          colors: [
-            result.color.withValues(alpha: 0.18),
-            AppTheme.bgCard,
-          ],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
+          colors: [result.color.withValues(alpha: 0.18), AppTheme.bgCard],
+          begin: Alignment.topLeft, end: Alignment.bottomRight,
         ),
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: result.color.withValues(alpha: 0.35)),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            name.trim().isEmpty ? '观察标的' : name.trim(),
-            style: const TextStyle(
-              color: AppTheme.textPrimary,
-              fontSize: 18,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-          const SizedBox(height: 10),
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  result.level,
-                  style: TextStyle(
-                    color: result.color,
-                    fontSize: 24,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-              ),
-              Text(
-                '${result.score}分',
-                style: TextStyle(
-                  color: result.color,
-                  fontSize: 24,
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          _MessageList(
-            title: '硬性过滤',
-            items: result.hardBlocks.isEmpty ? ['未触发硬性排除项'] : result.hardBlocks,
-            color: result.hardBlocks.isEmpty
-                ? AppTheme.primaryGreen
-                : AppTheme.riskRed,
-          ),
-          const SizedBox(height: 8),
-          _MessageList(
-            title: '优势',
-            items: result.strengths.isEmpty ? ['暂无明显加分项'] : result.strengths,
-            color: AppTheme.primaryGreen,
-          ),
-          const SizedBox(height: 8),
-          _MessageList(
-            title: '风险',
-            items: result.warnings.isEmpty ? ['暂无明显扣分项'] : result.warnings,
-            color: AppTheme.accentGold,
-          ),
-        ],
-      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(
+          name.trim().isEmpty ? '观察标的' : name.trim(),
+          style: const TextStyle(color: AppTheme.textPrimary, fontSize: 18, fontWeight: FontWeight.w800),
+        ),
+        const SizedBox(height: 10),
+        Row(children: [
+          Expanded(child: Text(result.level,
+              style: TextStyle(color: result.color, fontSize: 24, fontWeight: FontWeight.w900))),
+          Text('${result.score}分',
+              style: TextStyle(color: result.color, fontSize: 24, fontWeight: FontWeight.w900)),
+        ]),
+        const SizedBox(height: 12),
+        _MsgList(
+          title: '硬性过滤',
+          items: result.hardBlocks.isEmpty ? ['未触发硬性排除项'] : result.hardBlocks,
+          color: result.hardBlocks.isEmpty ? AppTheme.primaryGreen : AppTheme.riskRed,
+        ),
+        const SizedBox(height: 8),
+        _MsgList(
+          title: '优势',
+          items: result.strengths.isEmpty ? ['暂无明显加分项'] : result.strengths,
+          color: AppTheme.primaryGreen,
+        ),
+        const SizedBox(height: 8),
+        _MsgList(
+          title: '风险',
+          items: result.warnings.isEmpty ? ['暂无明显扣分项'] : result.warnings,
+          color: AppTheme.accentGold,
+        ),
+      ]),
     );
   }
 }
 
-class _BasicInfoCard extends StatelessWidget {
-  final TextEditingController pePercentileController;
-  final TextEditingController pbPercentileController;
-  final VoidCallback onChanged;
-
-  const _BasicInfoCard({
-    required this.pePercentileController,
-    required this.pbPercentileController,
-    required this.onChanged,
+// ── 自动数据展示：行情 + 估值 ─────────────────────────────────────────────────
+class _AutoDataCard extends StatelessWidget {
+  final double? price;
+  final int? pePct, pbPct;
+  final bool peEst, pbEst;
+  final String? trend, trendTip;
+  const _AutoDataCard({
+    this.price, this.pePct, this.pbPct,
+    this.peEst = false, this.pbEst = false,
+    this.trend, this.trendTip,
   });
-
   @override
   Widget build(BuildContext context) {
-    return _InputCard(
-      title: '估值百分位',
-      children: [
-        Row(
-          children: [
-            Expanded(
-              child: _NumberField(
-                label: 'PE百分位',
-                suffix: '%',
-                controller: pePercentileController,
-                onChanged: onChanged,
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _NumberField(
-                label: 'PB百分位',
-                suffix: '%',
-                controller: pbPercentileController,
-                onChanged: onChanged,
-              ),
-            ),
-          ],
-        ),
+    return _Card(title: '估值百分位 & K线趋势', children: [
+      Row(children: [
+        Expanded(child: _ReadItem(
+          label: '当前价',
+          value: price != null ? '${price!.toStringAsFixed(2)} 元' : '—',
+          badge: null,
+        )),
+        Expanded(child: _ReadItem(
+          label: 'PE历史百分位',
+          value: pePct != null ? '$pePct%' : '—',
+          badge: peEst ? '估算' : null,
+          warn: pePct != null && pePct! >= 80,
+          good: pePct != null && pePct! <= 30,
+        )),
+        Expanded(child: _ReadItem(
+          label: 'PB历史百分位',
+          value: pbPct != null ? '$pbPct%' : '—',
+          badge: pbEst ? '估算' : null,
+          warn: pbPct != null && pbPct! >= 80,
+          good: pbPct != null && pbPct! <= 30,
+        )),
+      ]),
+      if (trendTip != null) ...[
+        const SizedBox(height: 10),
+        _TrendRow(trend: trend ?? 'neutral', tip: trendTip!),
       ],
-    );
+    ]);
   }
 }
 
+// ── 自动数据展示：财务安全 ────────────────────────────────────────────────────
+class _FinancialAutoCard extends StatelessWidget {
+  final double? pledge, debt, goodwill, cashflow;
+  const _FinancialAutoCard({this.pledge, this.debt, this.goodwill, this.cashflow});
+  @override
+  Widget build(BuildContext context) {
+    return _Card(title: '财务安全（自动拉取）', children: [
+      Row(children: [
+        Expanded(child: _ReadItem(
+          label: '大股东质押率',
+          value: pledge != null ? '${pledge!.toStringAsFixed(1)}%' : '—',
+          warn: pledge != null && pledge! >= 30,
+          good: pledge != null && pledge! < 10,
+          hardWarn: pledge != null && pledge! >= 50,
+        )),
+        Expanded(child: _ReadItem(
+          label: '资产负债率',
+          value: debt != null ? '${debt!.toStringAsFixed(1)}%' : '—',
+          warn: debt != null && debt! >= 70,
+          good: debt != null && debt! <= 45,
+        )),
+      ]),
+      const SizedBox(height: 12),
+      Row(children: [
+        Expanded(child: _ReadItem(
+          label: '商誉/净资产',
+          value: goodwill != null ? '${goodwill!.toStringAsFixed(1)}%' : '—',
+          warn: goodwill != null && goodwill! >= 30,
+          good: goodwill != null && goodwill! < 5,
+        )),
+        Expanded(child: _ReadItem(
+          label: '经营现金流/净利润',
+          value: cashflow != null ? '${cashflow!.toStringAsFixed(1)}%' : '—',
+          warn: cashflow != null && cashflow! < 5,
+          good: cashflow != null && cashflow! >= 50,
+          hardWarn: cashflow != null && cashflow! < 0,
+        )),
+      ]),
+      const SizedBox(height: 10),
+      const _AutoNote(text: '以上数据由东方财富数据中心自动拉取，仅供参考，建议结合年报核实。'),
+    ]);
+  }
+}
+
+// ── 自动数据展示：分红灌溉 ────────────────────────────────────────────────────
+class _DividendAutoCard extends StatelessWidget {
+  final double? yield_;
+  final int? years;
+  final String? stability;
+  const _DividendAutoCard({this.yield_, this.years, this.stability});
+  String get _stabilityLabel {
+    if (stability == 'stable')   return '稳定';
+    if (stability == 'unstable') return '不稳定';
+    if (stability == 'normal')   return '一般';
+    return '—';
+  }
+  Color _stabilityColor(BuildContext ctx) {
+    if (stability == 'stable')   return AppTheme.primaryGreen;
+    if (stability == 'unstable') return AppTheme.riskRed;
+    return AppTheme.textSecondary;
+  }
+  @override
+  Widget build(BuildContext context) {
+    return _Card(title: '分红灌溉（自动拉取）', children: [
+      Row(children: [
+        Expanded(child: _ReadItem(
+          label: '股息率',
+          value: yield_ != null ? '${yield_!.toStringAsFixed(2)}%' : '—',
+          good: yield_ != null && yield_! >= 3,
+          warn: yield_ != null && yield_! < 1 && yield_! > 0,
+        )),
+        Expanded(child: _ReadItem(
+          label: '连续分红年数',
+          value: years != null ? '$years 年' : '—',
+          good: years != null && years! >= 5,
+          warn: years != null && years! < 2,
+        )),
+        Expanded(child: _ReadItem(
+          label: '分红稳定性',
+          value: _stabilityLabel,
+          valueColor: stability != null ? _stabilityColor(context) : null,
+        )),
+      ]),
+      const SizedBox(height: 10),
+      const _AutoNote(text: '股息率 ≥3% 且连续分红 ≥5年为播种标准，分红是零成本策略的核心灌溉来源。'),
+    ]);
+  }
+}
+
+// ── 用户录入：硬性一票否决 ────────────────────────────────────────────────────
 class _HardFilterCard extends StatelessWidget {
-  final bool isSt;
-  final bool delistRisk;
-  final bool violationGuarantee;
-  final bool financialFraudRisk;
-  final ValueChanged<bool> onStChanged;
-  final ValueChanged<bool> onDelistChanged;
-  final ValueChanged<bool> onGuaranteeChanged;
-  final ValueChanged<bool> onFraudChanged;
-
+  final bool isSt, delistRisk, violationGuarantee, financialFraudRisk;
+  final ValueChanged<bool> onStChanged, onDelistChanged, onGuaranteeChanged, onFraudChanged;
   const _HardFilterCard({
-    required this.isSt,
-    required this.delistRisk,
-    required this.violationGuarantee,
-    required this.financialFraudRisk,
-    required this.onStChanged,
-    required this.onDelistChanged,
-    required this.onGuaranteeChanged,
-    required this.onFraudChanged,
+    required this.isSt, required this.delistRisk,
+    required this.violationGuarantee, required this.financialFraudRisk,
+    required this.onStChanged, required this.onDelistChanged,
+    required this.onGuaranteeChanged, required this.onFraudChanged,
   });
-
   @override
   Widget build(BuildContext context) {
-    return _InputCard(
-      title: '硬性过滤',
+    return _Card(
+      title: '硬性一票否决（人工判断）',
+      borderColor: AppTheme.accentGold.withValues(alpha: 0.4),
       children: [
-        _SwitchLine(label: 'ST / *ST', value: isSt, onChanged: onStChanged),
-        _SwitchLine(
-            label: '退市风险', value: delistRisk, onChanged: onDelistChanged),
-        _SwitchLine(
-            label: '违规担保',
-            value: violationGuarantee,
-            onChanged: onGuaranteeChanged),
-        _SwitchLine(
-            label: '财务造假风险',
-            value: financialFraudRisk,
-            onChanged: onFraudChanged),
+        const _AutoNote(text: '以下任意一项触发，立即停止播种。ST状态和退市风险可由系统辅助识别，违规担保和财务造假需人工核查。'),
+        const SizedBox(height: 10),
+        _SwitchRow(label: 'ST / *ST 标的', value: isSt, onChanged: onStChanged,
+            desc: '被特别处理，流动性和基本面均有风险'),
+        _SwitchRow(label: '退市风险', value: delistRisk, onChanged: onDelistChanged,
+            desc: '名称含"退"或处于退市整理期'),
+        _SwitchRow(label: '违规担保', value: violationGuarantee, onChanged: onGuaranteeChanged,
+            desc: '存在违规对外担保，资产可能被冻结'),
+        _SwitchRow(label: '财务造假风险', value: financialFraudRisk, onChanged: onFraudChanged,
+            desc: '审计意见非标、核心数据异常'),
       ],
     );
   }
 }
 
-class _FinancialQualityCard extends StatelessWidget {
-  final TextEditingController pledgeRatioController;
-  final TextEditingController debtRatioController;
-  final TextEditingController goodwillRatioController;
-  final TextEditingController cashflowMarginController;
-  final VoidCallback onChanged;
-
-  const _FinancialQualityCard({
-    required this.pledgeRatioController,
-    required this.debtRatioController,
-    required this.goodwillRatioController,
-    required this.cashflowMarginController,
-    required this.onChanged,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return _InputCard(
-      title: '财务质量',
-      children: [
-        Row(
-          children: [
-            Expanded(
-              child: _NumberField(
-                label: '质押率',
-                suffix: '%',
-                controller: pledgeRatioController,
-                onChanged: onChanged,
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _NumberField(
-                label: '负债率',
-                suffix: '%',
-                controller: debtRatioController,
-                onChanged: onChanged,
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        Row(
-          children: [
-            Expanded(
-              child: _NumberField(
-                label: '商誉占比',
-                suffix: '%',
-                controller: goodwillRatioController,
-                onChanged: onChanged,
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _NumberField(
-                label: '现金流利润比',
-                suffix: '%',
-                controller: cashflowMarginController,
-                allowNegative: true,
-                onChanged: onChanged,
-              ),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-}
-
-class _DividendCard extends StatelessWidget {
-  final TextEditingController dividendYieldController;
-  final TextEditingController dividendYearsController;
-  final String stability;
-  final ValueChanged<String> onStabilityChanged;
-  final VoidCallback onChanged;
-
-  const _DividendCard({
-    required this.dividendYieldController,
-    required this.dividendYearsController,
-    required this.stability,
-    required this.onStabilityChanged,
-    required this.onChanged,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return _InputCard(
-      title: '分红灌溉',
-      children: [
-        Row(
-          children: [
-            Expanded(
-              child: _NumberField(
-                label: '股息率',
-                suffix: '%',
-                controller: dividendYieldController,
-                onChanged: onChanged,
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _NumberField(
-                label: '连续分红',
-                suffix: '年',
-                controller: dividendYearsController,
-                decimals: 0,
-                onChanged: onChanged,
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        _ThreeChoice(
-          labels: const ['稳定', '一般', '不稳'],
-          values: const ['stable', 'normal', 'unstable'],
-          selected: stability,
-          onChanged: onStabilityChanged,
-        ),
-      ],
-    );
-  }
-}
-
-class _CycleCard extends StatelessWidget {
-  final String cycle;
-  final ValueChanged<String> onChanged;
-
-  const _CycleCard({required this.cycle, required this.onChanged});
-
-  @override
-  Widget build(BuildContext context) {
-    return _InputCard(
-      title: '行业周期',
-      children: [
-        _ThreeChoice(
-          labels: const ['向上', '中性', '向下'],
-          values: const ['up', 'neutral', 'down'],
-          selected: cycle,
-          onChanged: onChanged,
-        ),
-      ],
-    );
-  }
-}
-
-class _AlertCard extends StatelessWidget {
-  final TextEditingController currentPriceController;
-  final TextEditingController buyTriggerController;
-  final TextEditingController harvestTriggerController;
+// ── 用户录入：播种计划价 ──────────────────────────────────────────────────────
+class _SeedPlanCard extends StatelessWidget {
+  final TextEditingController seedPriceController;
+  final TextEditingController maxAddPriceController;
+  final TextEditingController harvestPriceController;
   final List<String> alerts;
   final VoidCallback onChanged;
-
-  const _AlertCard({
-    required this.currentPriceController,
-    required this.buyTriggerController,
-    required this.harvestTriggerController,
-    required this.alerts,
-    required this.onChanged,
+  const _SeedPlanCard({
+    required this.seedPriceController, required this.maxAddPriceController,
+    required this.harvestPriceController, required this.alerts, required this.onChanged,
   });
-
   @override
   Widget build(BuildContext context) {
-    return _InputCard(
-      title: '本地触发提醒',
+    return _Card(
+      title: '播种计划价（人工录入）',
+      borderColor: AppTheme.accentGold.withValues(alpha: 0.4),
       children: [
-        Row(
-          children: [
-            Expanded(
-              child: _NumberField(
-                label: '当前价',
-                suffix: '元',
-                controller: currentPriceController,
-                onChanged: onChanged,
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _NumberField(
-                label: '播种线',
-                suffix: '元',
-                controller: buyTriggerController,
-                onChanged: onChanged,
-              ),
-            ),
-          ],
-        ),
+        const _AutoNote(text: '以下价格由用户根据个人判断设定，自动拉取仅提供参考初始值（当前价 ×0.92 / ×1.20）。'),
         const SizedBox(height: 12),
-        _NumberField(
-          label: '收割线',
+        Row(children: [
+          Expanded(child: _NumField(
+            label: '播种触发价',
+            hint: '首批买入触发线',
+            suffix: '元',
+            controller: seedPriceController,
+            onChanged: onChanged,
+          )),
+          const SizedBox(width: 12),
+          Expanded(child: _NumField(
+            label: '最高加仓价',
+            hint: '仓位封顶线',
+            suffix: '元',
+            controller: maxAddPriceController,
+            onChanged: onChanged,
+          )),
+        ]),
+        const SizedBox(height: 12),
+        _NumField(
+          label: '目标收割价',
+          hint: '回本/收割触发线',
           suffix: '元',
-          controller: harvestTriggerController,
+          controller: harvestPriceController,
           onChanged: onChanged,
         ),
-        const SizedBox(height: 12),
-        _MessageList(title: '触发状态', items: alerts, color: AppTheme.accent),
+        const SizedBox(height: 14),
+        _MsgList(title: '触发状态', items: alerts, color: AppTheme.accent),
       ],
     );
   }
 }
 
-class _InputCard extends StatelessWidget {
-  final String title;
-  final List<Widget> children;
-
-  const _InputCard({required this.title, required this.children});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: AppTheme.bgCard,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppTheme.borderColor, width: 0.5),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            title,
-            style: const TextStyle(
-              color: AppTheme.textPrimary,
-              fontSize: 15,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(height: 14),
-          ...children,
-        ],
-      ),
-    );
-  }
-}
-
-class _TextFieldLine extends StatelessWidget {
+// ── 只读数值展示项 ────────────────────────────────────────────────────────────
+class _ReadItem extends StatelessWidget {
   final String label;
-  final TextEditingController controller;
-  final String? hint;
-  final VoidCallback onChanged;
+  final String value;
+  final String? badge;
+  final Color? valueColor;
+  final bool warn;
+  final bool good;
+  final bool hardWarn;
 
-  const _TextFieldLine({
-    required this.label,
-    required this.controller,
-    this.hint,
-    required this.onChanged,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(label,
-            style:
-                const TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
-        const SizedBox(height: 6),
-        TextField(
-          controller: controller,
-          onChanged: (_) => onChanged(),
-          style: const TextStyle(color: AppTheme.textPrimary, fontSize: 14),
-          decoration: InputDecoration(hintText: hint),
-        ),
-      ],
-    );
-  }
-}
-
-class _NumberField extends StatelessWidget {
-  final String label;
-  final String suffix;
-  final TextEditingController controller;
-  final int decimals;
-  final bool allowNegative;
-  final VoidCallback onChanged;
-
-  const _NumberField({
-    required this.label,
-    required this.suffix,
-    required this.controller,
-    this.decimals = 2,
-    this.allowNegative = false,
-    required this.onChanged,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final pattern = allowNegative
-        ? RegExp('^-?\\d*\\.?\\d{0,$decimals}')
-        : RegExp('^\\d*\\.?\\d{0,$decimals}');
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(label,
-            style:
-                const TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
-        const SizedBox(height: 6),
-        TextField(
-          controller: controller,
-          keyboardType: const TextInputType.numberWithOptions(
-            decimal: true,
-            signed: true,
-          ),
-          inputFormatters: [
-            decimals == 0
-                ? FilteringTextInputFormatter.allow(
-                    allowNegative ? RegExp(r'^-?\d*') : RegExp(r'^\d*'),
-                  )
-                : FilteringTextInputFormatter.allow(pattern),
-          ],
-          onChanged: (_) => onChanged(),
-          style: const TextStyle(color: AppTheme.textPrimary, fontSize: 14),
-          decoration: InputDecoration(
-            suffixText: suffix,
-            suffixStyle: const TextStyle(color: AppTheme.textMuted),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _SwitchLine extends StatelessWidget {
-  final String label;
-  final bool value;
-  final ValueChanged<bool> onChanged;
-
-  const _SwitchLine({
+  const _ReadItem({
     required this.label,
     required this.value,
-    required this.onChanged,
+    this.badge,
+    this.valueColor,
+    this.warn = false,
+    this.good = false,
+    this.hardWarn = false,
   });
 
   @override
   Widget build(BuildContext context) {
-    return SwitchListTile(
-      contentPadding: EdgeInsets.zero,
-      value: value,
-      onChanged: onChanged,
-      activeThumbColor: AppTheme.riskRed,
-      title: Text(
-        label,
-        style: const TextStyle(color: AppTheme.textSecondary, fontSize: 13),
+    final Color vColor = hardWarn
+        ? AppTheme.riskRed
+        : warn
+            ? AppTheme.accentGold
+            : good
+                ? AppTheme.primaryGreen
+                : valueColor ?? AppTheme.textPrimary;
+
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text(label, style: const TextStyle(color: AppTheme.textMuted, fontSize: 11)),
+      const SizedBox(height: 4),
+      Row(children: [
+        Text(value, style: TextStyle(color: vColor, fontSize: 15, fontWeight: FontWeight.w700)),
+        if (badge != null) ...[
+          const SizedBox(width: 4),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+            decoration: BoxDecoration(
+              color: AppTheme.textMuted.withValues(alpha: 0.2),
+              borderRadius: BorderRadius.circular(3),
+            ),
+            child: Text(badge!, style: const TextStyle(color: AppTheme.textMuted, fontSize: 9)),
+          ),
+        ],
+      ]),
+    ]);
+  }
+}
+
+// ── K线趋势行 ─────────────────────────────────────────────────────────────────
+class _TrendRow extends StatelessWidget {
+  final String trend;
+  final String tip;
+  const _TrendRow({required this.trend, required this.tip});
+
+  @override
+  Widget build(BuildContext context) {
+    final Color c = trend == 'up'
+        ? AppTheme.accentGold
+        : trend == 'down'
+            ? AppTheme.riskRed
+            : AppTheme.textSecondary;
+    final String label = trend == 'up' ? '上行' : trend == 'down' ? '下行' : '震荡';
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: c.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: c.withValues(alpha: 0.25)),
       ),
+      child: Row(children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+          decoration: BoxDecoration(
+            color: c.withValues(alpha: 0.18),
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Text('K线 $label', style: TextStyle(color: c, fontSize: 11, fontWeight: FontWeight.w700)),
+        ),
+        const SizedBox(width: 8),
+        Expanded(child: Text(tip, style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11, height: 1.3))),
+      ]),
     );
   }
 }
 
-class _ThreeChoice extends StatelessWidget {
+// ── 自动备注 ──────────────────────────────────────────────────────────────────
+class _AutoNote extends StatelessWidget {
+  final String text;
+  const _AutoNote({required this.text});
+  @override
+  Widget build(BuildContext context) {
+    return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      const Icon(Icons.info_outline, size: 12, color: AppTheme.textMuted),
+      const SizedBox(width: 5),
+      Expanded(child: Text(text, style: const TextStyle(color: AppTheme.textMuted, fontSize: 11, height: 1.4))),
+    ]);
+  }
+}
+
+// ── Switch 行 ─────────────────────────────────────────────────────────────────
+class _SwitchRow extends StatelessWidget {
+  final String label;
+  final String desc;
+  final bool value;
+  final ValueChanged<bool> onChanged;
+  const _SwitchRow({required this.label, required this.desc, required this.value, required this.onChanged});
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(children: [
+        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(label, style: TextStyle(
+            color: value ? AppTheme.riskRed : AppTheme.textSecondary,
+            fontSize: 13, fontWeight: value ? FontWeight.w700 : FontWeight.normal,
+          )),
+          Text(desc, style: const TextStyle(color: AppTheme.textMuted, fontSize: 11, height: 1.3)),
+        ])),
+        Switch(value: value, onChanged: onChanged, activeColor: AppTheme.riskRed),
+      ]),
+    );
+  }
+}
+
+// ── 数字输入框 ────────────────────────────────────────────────────────────────
+class _NumField extends StatelessWidget {
+  final String label;
+  final String hint;
+  final String suffix;
+  final TextEditingController controller;
+  final VoidCallback onChanged;
+  const _NumField({
+    required this.label, required this.hint, required this.suffix,
+    required this.controller, required this.onChanged,
+  });
+  @override
+  Widget build(BuildContext context) {
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text(label, style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+      const SizedBox(height: 6),
+      TextField(
+        controller: controller,
+        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+        inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d{0,2}'))],
+        onChanged: (_) => onChanged(),
+        style: const TextStyle(color: AppTheme.textPrimary, fontSize: 14),
+        decoration: InputDecoration(
+          hintText: hint,
+          suffixText: suffix,
+          suffixStyle: const TextStyle(color: AppTheme.textMuted),
+        ),
+      ),
+    ]);
+  }
+}
+
+// ── 字段标签 ──────────────────────────────────────────────────────────────────
+class _FieldLabel extends StatelessWidget {
+  final String text;
+  const _FieldLabel(this.text);
+  @override
+  Widget build(BuildContext context) =>
+      Text(text, style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12));
+}
+
+// ── 双选切换 ──────────────────────────────────────────────────────────────────
+class _TogglePair extends StatelessWidget {
   final List<String> labels;
   final List<String> values;
   final String selected;
   final ValueChanged<String> onChanged;
-
-  const _ThreeChoice({
-    required this.labels,
-    required this.values,
-    required this.selected,
-    required this.onChanged,
-  });
-
+  const _TogglePair({required this.labels, required this.values, required this.selected, required this.onChanged});
   @override
   Widget build(BuildContext context) {
     return Row(
-      children: List.generate(labels.length, (index) {
-        final isSelected = values[index] == selected;
-        return Expanded(
-          child: Padding(
-            padding: EdgeInsets.only(right: index == labels.length - 1 ? 0 : 8),
-            child: GestureDetector(
-              onTap: () => onChanged(values[index]),
-              child: Container(
-                alignment: Alignment.center,
-                padding: const EdgeInsets.symmetric(vertical: 9),
-                decoration: BoxDecoration(
-                  color: isSelected
-                      ? AppTheme.accent.withValues(alpha: 0.15)
-                      : AppTheme.bgCardLight,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(
-                    color: isSelected ? AppTheme.accent : AppTheme.borderColor,
-                  ),
-                ),
-                child: Text(
-                  labels[index],
-                  style: TextStyle(
-                    color:
-                        isSelected ? AppTheme.accent : AppTheme.textSecondary,
-                    fontSize: 13,
-                    fontWeight:
-                        isSelected ? FontWeight.w700 : FontWeight.normal,
-                  ),
-                ),
+      children: List.generate(labels.length, (i) {
+        final sel = values[i] == selected;
+        return Expanded(child: Padding(
+          padding: EdgeInsets.only(right: i == labels.length - 1 ? 0 : 8),
+          child: GestureDetector(
+            onTap: () => onChanged(values[i]),
+            child: Container(
+              alignment: Alignment.center,
+              padding: const EdgeInsets.symmetric(vertical: 10),
+              decoration: BoxDecoration(
+                color: sel ? AppTheme.accent.withValues(alpha: 0.15) : AppTheme.bgCardLight,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: sel ? AppTheme.accent : AppTheme.borderColor),
               ),
+              child: Text(labels[i], style: TextStyle(
+                color: sel ? AppTheme.accent : AppTheme.textSecondary,
+                fontSize: 13, fontWeight: sel ? FontWeight.w700 : FontWeight.normal,
+              )),
             ),
           ),
-        );
+        ));
       }),
     );
   }
 }
 
-class _MessageList extends StatelessWidget {
+// ── 消息列表 ──────────────────────────────────────────────────────────────────
+class _MsgList extends StatelessWidget {
   final String title;
   final List<String> items;
   final Color color;
-
-  const _MessageList({
-    required this.title,
-    required this.items,
-    required this.color,
-  });
-
+  const _MsgList({required this.title, required this.items, required this.color});
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(title,
-            style: TextStyle(
-                color: color, fontSize: 12, fontWeight: FontWeight.w700)),
-        const SizedBox(height: 6),
-        ...items.map(
-          (item) => Padding(
-            padding: const EdgeInsets.only(bottom: 5),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Icon(Icons.circle, color: color, size: 6),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    item,
-                    style: const TextStyle(
-                      color: AppTheme.textSecondary,
-                      fontSize: 12,
-                      height: 1.35,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ],
-    );
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text(title, style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w700)),
+      const SizedBox(height: 6),
+      ...items.map((item) => Padding(
+        padding: const EdgeInsets.only(bottom: 5),
+        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Icon(Icons.circle, color: color, size: 6),
+          const SizedBox(width: 8),
+          Expanded(child: Text(item, style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12, height: 1.35))),
+        ]),
+      )),
+    ]);
   }
 }
 
+// ── 数据模型 ──────────────────────────────────────────────────────────────────
 class _ScreeningResult {
   final int score;
   final String level;
@@ -1429,12 +1082,9 @@ class _ScreeningResult {
   final List<String> priceAlerts;
 
   const _ScreeningResult({
-    required this.score,
-    required this.level,
-    required this.color,
-    required this.hardBlocks,
-    required this.warnings,
-    required this.strengths,
-    required this.priceAlerts,
+    required this.score, required this.level, required this.color,
+    required this.hardBlocks, required this.warnings,
+    required this.strengths, required this.priceAlerts,
   });
 }
+

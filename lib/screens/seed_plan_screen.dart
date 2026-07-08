@@ -3,26 +3,42 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../models/stock_context.dart';
+import '../screens/add_holding_batch_screen.dart';
 import '../theme/app_theme.dart';
 import '../utils/formatters.dart';
 
 class SeedPlanScreen extends StatefulWidget {
-  const SeedPlanScreen({super.key});
+  final StockContext? stockContext;
+
+  const SeedPlanScreen({super.key, this.stockContext});
 
   @override
   State<SeedPlanScreen> createState() => _SeedPlanScreenState();
 }
 
 class _SeedPlanScreenState extends State<SeedPlanScreen> {
-  final _capitalController = TextEditingController(text: '100000');
-  final _startPriceController = TextEditingController(text: '10.00');
+  late final TextEditingController _capitalController;
+  late final TextEditingController _startPriceController;
   final _seedCountController = TextEditingController(text: '5');
   final _dropStepController = TextEditingController(text: '8');
   final _reboundController = TextEditingController(text: '30');
   final _commissionController = TextEditingController(text: '5');
-  String _assetType = 'stock';
+  late String _assetType;
 
   bool get _isFund => _assetType == 'fund';
+
+  @override
+  void initState() {
+    super.initState();
+    final ctx = widget.stockContext;
+    _assetType = ctx?.assetType ?? 'stock';
+    _capitalController = TextEditingController(text: '100000');
+    final startPrice = ctx?.currentPrice ?? ctx?.avgCostPrice;
+    _startPriceController = TextEditingController(
+      text: startPrice != null ? startPrice.toStringAsFixed(2) : '10.00',
+    );
+  }
 
   @override
   void dispose() {
@@ -92,18 +108,27 @@ class _SeedPlanScreenState extends State<SeedPlanScreen> {
     final totalQuantity = plan.fold(0.0, (sum, s) => sum + s.quantity);
     final freeQuantity = plan.fold(0.0, (sum, s) => sum + s.freeQuantity);
 
+    final ctx = widget.stockContext;
+
     return Scaffold(
       appBar: AppBar(
-        title: const Text('播种计划'),
+        title: Text(ctx?.name != null ? '播种计划 · ${ctx!.name}' : '播种计划'),
       ),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 88),
         children: [
-          _PrincipleBand(
-            title: '本金先活下来，利润用时间发芽',
-            subtitle: '先拆仓播种，价格或净值越低越有计划；触发回收条件后记录部分现金回笼，保留剩余资产作为零成本种子。',
-          ),
+          if (ctx?.name != null)
+            _StockContextBanner(ctx: ctx!)
+          else
+            _PrincipleBand(
+              title: '本金先活下来，利润用时间发芽',
+              subtitle: '先拆仓播种，价格或净值越低越有计划；触发回收条件后记录部分现金回笼，保留剩余资产作为零成本种子。',
+            ),
           const SizedBox(height: 16),
+          if (ctx != null && (ctx.pePercentile != null || ctx.industryCycle != null))
+            _ValuationHintCard(ctx: ctx),
+          if (ctx != null && (ctx.pePercentile != null || ctx.industryCycle != null))
+            const SizedBox(height: 16),
           _PlannerForm(
             capitalController: _capitalController,
             startPriceController: _startPriceController,
@@ -137,11 +162,185 @@ class _SeedPlanScreenState extends State<SeedPlanScreen> {
                   child: _SeedSliceCard(
                     slice: slice,
                     unit: _isFund ? '份' : '股',
+                    onRecord: ctx == null
+                        ? null
+                        : () => Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => AddHoldingBatchScreen(
+                                  stockContext: ctx.copyWith(
+                                    planBuyPrice: slice.buyPrice,
+                                    planQuantity: slice.quantity,
+                                  ),
+                                ),
+                              ),
+                            ),
                   ),
                 )),
           const SizedBox(height: 12),
+          if (plan.isNotEmpty && ctx != null)
+            _QuickRecordBar(
+              ctx: ctx,
+              firstSlice: plan.first,
+              isFund: _isFund,
+            ),
+          if (plan.isNotEmpty && ctx != null) const SizedBox(height: 12),
           const _RiskRules(),
         ],
+      ),
+    );
+  }
+}
+
+class _StockContextBanner extends StatelessWidget {
+  final StockContext ctx;
+  const _StockContextBanner({required this.ctx});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            AppTheme.accent.withValues(alpha: 0.16),
+            AppTheme.accentGold.withValues(alpha: 0.08),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppTheme.accent.withValues(alpha: 0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.grass, color: AppTheme.accentGold, size: 18),
+              const SizedBox(width: 8),
+              Text(
+                ctx.name ?? '',
+                style: const TextStyle(
+                  color: AppTheme.textPrimary,
+                  fontSize: 17,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(width: 8),
+              if (ctx.code != null)
+                Text(
+                  ctx.code!,
+                  style: const TextStyle(
+                      color: AppTheme.textMuted, fontSize: 13),
+                ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            ctx.avgCostPrice != null && ctx.avgCostPrice! > 0
+                ? '当前成本价 ¥${Formatters.price(ctx.avgCostPrice!)}，已从持仓/排雷自动填入首批价格'
+                : '已从排雷自动填入首批价格，请确认参数后生成计划',
+            style: const TextStyle(
+                color: AppTheme.textSecondary, fontSize: 12, height: 1.4),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ValuationHintCard extends StatelessWidget {
+  final StockContext ctx;
+  const _ValuationHintCard({required this.ctx});
+
+  @override
+  Widget build(BuildContext context) {
+    final pe = ctx.pePercentile;
+    final cycle = ctx.industryCycle;
+
+    String positionHint;
+    Color hintColor;
+    if (pe != null && pe <= 30) {
+      positionHint = 'PE百分位 ${pe.toInt()}%，处于历史低位，可考虑较重仓位';
+      hintColor = AppTheme.primaryGreen;
+    } else if (pe != null && pe >= 70) {
+      positionHint = 'PE百分位 ${pe.toInt()}%，估值偏高，建议轻仓首批观察';
+      hintColor = AppTheme.riskRed;
+    } else {
+      positionHint = pe != null
+          ? 'PE百分位 ${pe.toInt()}%，估值中性，按计划正常播种'
+          : '未获取到估值百分位';
+      hintColor = AppTheme.accentGold;
+    }
+
+    String cycleHint = '';
+    if (cycle == 'up') cycleHint = ' · 行业趋势向上';
+    if (cycle == 'down') cycleHint = ' · 行业趋势向下，可缩减批次';
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: hintColor.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: hintColor.withValues(alpha: 0.3)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.insights, color: hintColor, size: 16),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              '$positionHint$cycleHint',
+              style: TextStyle(
+                  color: hintColor, fontSize: 12, height: 1.4),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _QuickRecordBar extends StatelessWidget {
+  final StockContext ctx;
+  final _SeedSlice firstSlice;
+  final bool isFund;
+
+  const _QuickRecordBar({
+    required this.ctx,
+    required this.firstSlice,
+    required this.isFund,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: double.infinity,
+      height: 50,
+      child: ElevatedButton.icon(
+        onPressed: () => Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => AddHoldingBatchScreen(
+              stockContext: ctx.copyWith(
+                planBuyPrice: firstSlice.buyPrice,
+                planQuantity: firstSlice.quantity,
+              ),
+            ),
+          ),
+        ),
+        icon: const Icon(Icons.add_circle_outline, size: 18),
+        label: Text(
+          '记录第一批入账  ¥${Formatters.price(firstSlice.buyPrice)} · ${Formatters.quantity(firstSlice.quantity)}${isFund ? '份' : '股'}',
+          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
+        ),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: AppTheme.accent,
+          foregroundColor: Colors.white,
+          shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12)),
+        ),
       ),
     );
   }
@@ -447,10 +646,12 @@ class _PlanSummary extends StatelessWidget {
 class _SeedSliceCard extends StatelessWidget {
   final _SeedSlice slice;
   final String unit;
+  final VoidCallback? onRecord;
 
   const _SeedSliceCard({
     required this.slice,
     required this.unit,
+    this.onRecord,
   });
 
   @override
@@ -538,6 +739,26 @@ class _SeedSliceCard extends StatelessWidget {
               height: 1.35,
             ),
           ),
+          if (onRecord != null) ...[
+            const SizedBox(height: 10),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: onRecord,
+                icon: const Icon(Icons.add_circle_outline, size: 15),
+                label: const Text('记录此批入账'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppTheme.accent,
+                  side: BorderSide(
+                      color: AppTheme.accent.withValues(alpha: 0.5)),
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  textStyle: const TextStyle(fontSize: 13),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8)),
+                ),
+              ),
+            ),
+          ],
         ],
       ),
     );

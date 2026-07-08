@@ -6,32 +6,58 @@ import '../utils/formatters.dart';
 import '../providers/holding_providers.dart';
 import '../models/holding_batch.dart';
 import '../models/stock.dart';
+import '../models/stock_context.dart';
 import '../services/stock_api_service.dart';
 
 class AddHoldingBatchScreen extends ConsumerStatefulWidget {
-  const AddHoldingBatchScreen({super.key});
+  final StockContext? stockContext;
+
+  const AddHoldingBatchScreen({super.key, this.stockContext});
 
   @override
   ConsumerState<AddHoldingBatchScreen> createState() =>
       _AddHoldingBatchScreenState();
 }
 
-class _AddHoldingBatchScreenState extends ConsumerState<AddHoldingBatchScreen> {
+class _AddHoldingBatchScreenState
+    extends ConsumerState<AddHoldingBatchScreen> {
   final _formKey = GlobalKey<FormState>();
-  final _codeController = TextEditingController();
-  final _nameController = TextEditingController();
-  final _priceController = TextEditingController();
-  final _qtyController = TextEditingController();
+  late final TextEditingController _codeController;
+  late final TextEditingController _nameController;
+  late final TextEditingController _priceController;
+  late final TextEditingController _qtyController;
   final _commissionController = TextEditingController(text: '0');
   final _noteController = TextEditingController();
 
   DateTime _buyDate = DateTime.now();
-  String _assetType = 'stock';
-  String _market = 'SH';
+  late String _assetType;
+  late String _market;
   List<Stock> _searchResults = [];
   bool _isSearching = false;
 
   bool get _isFund => _assetType == 'fund';
+
+  @override
+  void initState() {
+    super.initState();
+    final ctx = widget.stockContext;
+    _assetType = ctx?.assetType ?? 'stock';
+    _market = ctx?.market ?? 'SH';
+    _codeController = TextEditingController(text: ctx?.code ?? '');
+    _nameController = TextEditingController(text: ctx?.name ?? '');
+    _priceController = TextEditingController(
+      text: ctx?.planBuyPrice != null
+          ? ctx!.planBuyPrice!.toStringAsFixed(_assetType == 'fund' ? 4 : 2)
+          : ctx?.currentPrice != null
+              ? ctx!.currentPrice!.toStringAsFixed(_assetType == 'fund' ? 4 : 2)
+              : '',
+    );
+    _qtyController = TextEditingController(
+      text: ctx?.planQuantity != null
+          ? ctx!.planQuantity!.toStringAsFixed(_assetType == 'fund' ? 4 : 0)
+          : '',
+    );
+  }
 
   @override
   void dispose() {

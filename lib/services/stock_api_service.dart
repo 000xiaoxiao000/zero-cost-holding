@@ -54,22 +54,44 @@ class StockApiService {
 
   void _log(String msg) => dev.log(msg, name: 'StockApiService');
 
+  /// 将 GBK 字节序列解码为 Dart String。
+  /// 原理：用 latin1 把字节原样读入（1字节→1码元，无损），
+  /// 再把每个码元的低8位重新拼成 UTF-8 兼容的字节流，最终用
+  /// utf8.decode(allowMalformed:true) 兜底。对于新浪/腾讯接口
+  /// 返回的 GBK 报文，ASCII 段（数字、逗号、引号）可直接使用，
+  /// 中文股票名称部分通过 latin1 保留字节后用 utf8 容错解码。
+  /// 若 utf8 解码仍乱码（字节非 UTF-8 序列），则回退到直接把字节
+  /// 值拼成 String，确保数字/符号字段始终正确，中文字段视接口
+  /// 实际编码而定。
+  ///
+  /// 注：东方财富接口（主源）返回 UTF-8 JSON，不会经过此方法。
+  String _decodeGbkBytes(List<int> bytes) {
+    if (bytes.isEmpty) return '';
+    // 优先尝试 UTF-8（部分接口会以 UTF-8 响应）
+    try {
+      final s = utf8.decode(bytes);
+      if (!s.contains('\uFFFD')) return s;
+    } catch (_) {}
+    // 回退：latin1 保留原始字节，ASCII 段完全正确，中文段保持字节值
+    return latin1.decode(bytes, allowInvalid: true);
+  }
+
   // ══════════════════════════════════════════════════════════════════════════
   // 实时/延迟行情
   // ══════════════════════════════════════════════════════════════════════════
 
-  /// 获取单只股票行情，三路降级：新浪 → 腾讯 → 东方财富 → 聚合数据（需key）
+  /// 获取单只股票行情，降级顺序：东方财富（UTF-8）→ 新浪 → 腾讯 → 聚合数据（需key）
   Future<Stock?> fetchStockQuote(String code, String market) async {
     Stock? r;
+
+    r = await _quoteEM(code, market);
+    if (r != null) { _log('行情[东方财富] $code OK'); return r; }
 
     r = await _quoteSina(code, market);
     if (r != null) { _log('行情[新浪] $code OK'); return r; }
 
     r = await _quoteQQ(code, market);
     if (r != null) { _log('行情[腾讯] $code OK'); return r; }
-
-    r = await _quoteEM(code, market);
-    if (r != null) { _log('行情[东方财富] $code OK'); return r; }
 
     if (ApiConfig.hasJuheKey) {
       r = await _quoteJuhe(code, market);
@@ -82,13 +104,14 @@ class StockApiService {
 
   /// 新浪财经行情（15分钟延迟，免费）
   /// 格式：var hq_str_sh600519="名称,今开,昨收,现价,最高,最低,,,,成交量(手),成交额,..."
+  /// 接口返回 GBK 编码，用 bytes + latin1 重建原始字节再 utf8 解码
   Future<Stock?> _quoteSina(String code, String market) async {
     try {
       final resp = await _dio.get(
         '${ApiConfig.sinaQuoteBase}/list=${_sinaCode(code, market)}',
-        options: Options(responseType: ResponseType.plain),
+        options: Options(responseType: ResponseType.bytes),
       );
-      final body = resp.data?.toString() ?? '';
+      final body = _decodeGbkBytes(resp.data as List<int>? ?? []);
       final match = RegExp(r'"([^"]+)"').firstMatch(body);
       if (match == null) return null;
       final p = match.group(1)!.split(',');
@@ -118,13 +141,14 @@ class StockApiService {
 
   /// 腾讯财经行情（备用）
   /// 格式：v_sh600519="1~名称~600519~现价~昨收~今开~成交量..."
+  /// 接口返回 GBK 编码，用 bytes + latin1 重建原始字节再 utf8 解码
   Future<Stock?> _quoteQQ(String code, String market) async {
     try {
       final resp = await _dio.get(
         '${ApiConfig.qqQuoteBase}/q=${_sinaCode(code, market)}',
-        options: Options(responseType: ResponseType.plain),
+        options: Options(responseType: ResponseType.bytes),
       );
-      final body = resp.data?.toString() ?? '';
+      final body = _decodeGbkBytes(resp.data as List<int>? ?? []);
       final match = RegExp(r'"([^"]+)"').firstMatch(body);
       if (match == null) return null;
       final p = match.group(1)!.split('~');
@@ -133,6 +157,8 @@ class StockApiService {
       final preClose = double.tryParse(p[4]) ?? 0.0;
       if (price <= 0) return null;
       final change = price - preClose;
+      // 腾讯接口字段：p[33]=最高, p[34]=最低, p[39]=PE(TTM), p[44]=总市值(亿), p[46]=PB
+      final marketCapYi = double.tryParse(p.length > 44 ? p[44] : '') ?? 0.0;
       return Stock(
         code: code,
         name: p[1],
@@ -146,8 +172,9 @@ class StockApiService {
         preClose: preClose,
         volume: (double.tryParse(p[6]) ?? 0.0) * 100,
         turnover: double.tryParse(p[37]) ?? 0.0,
-        pe: double.tryParse(p[39]) ?? 0.0,
-        pb: double.tryParse(p[46]) ?? 0.0,
+        pe: double.tryParse(p.length > 39 ? p[39] : '') ?? 0.0,
+        pb: double.tryParse(p.length > 46 ? p[46] : '') ?? 0.0,
+        marketCap: marketCapYi > 0 ? marketCapYi * 1e8 : 0.0,
       );
     } catch (_) {
       return null;
@@ -200,7 +227,7 @@ class StockApiService {
           'fltt': 2,
           'invt': 2,
           'ut': ApiConfig.emUtToken,
-          'fields': 'f43,f57,f58,f169,f170,f46,f44,f45,f47,f48,f116,f167,f168,f60',
+          'fields': 'f43,f57,f58,f169,f170,f46,f44,f45,f47,f48,f116,f167,f168,f60,f162',
           'secid': _emSecid(code, market),
         },
       );
@@ -226,6 +253,7 @@ class StockApiService {
         pe: (_n(d['f167']) ?? 0.0),
         pb: (_n(d['f168']) ?? 0.0),
         marketCap: (_n(d['f116']) ?? 0.0),
+        turnoverRate: (_n(d['f162']) ?? 0.0),
       );
     } catch (_) {
       return null;
@@ -245,9 +273,9 @@ class StockApiService {
     try {
       final resp = await _dio.get(
         '${ApiConfig.sinaQuoteBase}/list=$codes',
-        options: Options(responseType: ResponseType.plain),
+        options: Options(responseType: ResponseType.bytes),
       );
-      final body = resp.data?.toString() ?? '';
+      final body = _decodeGbkBytes(resp.data as List<int>? ?? []);
       final re =
           RegExp(r'hq_str_(s[hz])(\d+)="([^"]*)"', multiLine: true);
       for (final m in re.allMatches(body)) {
@@ -291,15 +319,58 @@ class StockApiService {
   // 历史 K 线（日线，前复权）
   // ══════════════════════════════════════════════════════════════════════════
 
-  /// 获取日K数据，主源新浪，降级腾讯财经。
+  /// 获取日K数据，优先东方财富（UTF-8 JSON），降级新浪，再降级腾讯财经。
   Future<List<Map<String, dynamic>>> fetchKlineDaily(
     String code,
     String market, {
     int limit = 120,
   }) async {
-    final r = await _klineSina(code, market, limit: limit);
+    final r = await _klineEM(code, market, limit: limit);
     if (r.isNotEmpty) return r;
+    final r2 = await _klineSina(code, market, limit: limit);
+    if (r2.isNotEmpty) return r2;
     return _klineQQ(code, market, limit: limit);
+  }
+
+  /// 东方财富历史日K（前复权，UTF-8 JSON，主源）
+  Future<List<Map<String, dynamic>>> _klineEM(
+    String code,
+    String market, {
+    int limit = 120,
+  }) async {
+    try {
+      final resp = await _dio.get(
+        ApiConfig.emKlineBase,
+        queryParameters: {
+          'secid': _emSecid(code, market),
+          'ut': ApiConfig.emUtToken,
+          'fields1': 'f1,f2,f3,f4,f5,f6',
+          'fields2': 'f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61',
+          'klt': 101,
+          'fqt': 1,
+          'beg': 0,
+          'end': '20500101',
+          'lmt': limit,
+        },
+      );
+      final klines = resp.data?['data']?['klines'] as List?;
+      if (klines == null || klines.isEmpty) return [];
+      return klines.map<Map<String, dynamic>>((line) {
+        final parts = line.toString().split(',');
+        if (parts.length < 6) return <String, dynamic>{};
+        return {
+          'date': parts[0],
+          'open': _n(parts[1]) ?? 0.0,
+          'close': _n(parts[2]) ?? 0.0,
+          'high': _n(parts[3]) ?? 0.0,
+          'low': _n(parts[4]) ?? 0.0,
+          'volume': _n(parts[5]) ?? 0.0,
+          'change_percent': _n(parts.length > 8 ? parts[8] : '0') ?? 0.0,
+        };
+      }).where((k) => k.isNotEmpty && (k['close'] as double) > 0).toList();
+    } catch (_) {
+      return [];
+    }
   }
 
   /// 新浪历史日K（前复权）
@@ -354,9 +425,9 @@ class StockApiService {
           'param': '${_sinaCode(code, market)},day,,,$limit,qfq',
           '_var': 'kline_dayqfq',
         },
-        options: Options(responseType: ResponseType.plain),
+        options: Options(responseType: ResponseType.bytes),
       );
-      final body = resp.data?.toString() ?? '';
+      final body = _decodeGbkBytes(resp.data as List<int>? ?? []);
       final start = body.indexOf('{');
       if (start < 0) return [];
       final parsed =

@@ -3,11 +3,14 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../models/stock_context.dart';
 import '../theme/app_theme.dart';
 import '../utils/formatters.dart';
 
 class HarvestCalculatorScreen extends StatefulWidget {
-  const HarvestCalculatorScreen({super.key});
+  final StockContext? stockContext;
+
+  const HarvestCalculatorScreen({super.key, this.stockContext});
 
   @override
   State<HarvestCalculatorScreen> createState() =>
@@ -15,15 +18,31 @@ class HarvestCalculatorScreen extends StatefulWidget {
 }
 
 class _HarvestCalculatorScreenState extends State<HarvestCalculatorScreen> {
-  final _currentPriceController = TextEditingController(text: '10.00');
-  final _remainingCostController = TextEditingController(text: '20000');
-  final _quantityController = TextEditingController(text: '3000');
+  late final TextEditingController _currentPriceController;
+  late final TextEditingController _remainingCostController;
+  late final TextEditingController _quantityController;
   final _gridStepController = TextEditingController(text: '8');
   final _atrController = TextEditingController(text: '0.45');
   final _atrMultipleController = TextEditingController(text: '2');
 
-  String _assetType = 'stock';
+  late String _assetType;
   String _mode = 'grid';
+
+  @override
+  void initState() {
+    super.initState();
+    final ctx = widget.stockContext;
+    _assetType = ctx?.assetType ?? 'stock';
+    _currentPriceController = TextEditingController(
+      text: ctx?.currentPrice?.toStringAsFixed(2) ?? '10.00',
+    );
+    _remainingCostController = TextEditingController(
+      text: ctx?.remainingCost?.toStringAsFixed(0) ?? '20000',
+    );
+    _quantityController = TextEditingController(
+      text: ctx?.remainingQty?.toStringAsFixed(0) ?? '3000',
+    );
+  }
 
   bool get _isFund => _assetType == 'fund';
   double get _currentPrice =>
@@ -102,7 +121,10 @@ class _HarvestCalculatorScreenState extends State<HarvestCalculatorScreen> {
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 88),
         children: [
-          const _IntroCard(),
+          if (widget.stockContext?.name != null)
+            _ContextBanner(ctx: widget.stockContext!)
+          else
+            const _IntroCard(),
           const SizedBox(height: 16),
           _ConfigCard(
             assetType: _assetType,
@@ -120,11 +142,68 @@ class _HarvestCalculatorScreenState extends State<HarvestCalculatorScreen> {
           const SizedBox(height: 16),
           _RangeCard(plan: plan, mode: _mode),
           const SizedBox(height: 12),
-          _ZeroCostActionCard(plan: plan, unit: _unit),
+          _ZeroCostActionCard(
+            plan: plan,
+            unit: _unit,
+            stockName: widget.stockContext?.name,
+          ),
           const SizedBox(height: 12),
           _IrrigationCard(plan: plan, unit: _unit),
           const SizedBox(height: 12),
           const _DisciplineCard(),
+        ],
+      ),
+    );
+  }
+}
+
+class _ContextBanner extends StatelessWidget {
+  final StockContext ctx;
+  const _ContextBanner({required this.ctx});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            AppTheme.primaryGreen.withValues(alpha: 0.14),
+            AppTheme.accent.withValues(alpha: 0.10),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppTheme.primaryGreen.withValues(alpha: 0.3)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.auto_graph, color: AppTheme.primaryGreen, size: 20),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  ctx.name ?? '',
+                  style: const TextStyle(
+                    color: AppTheme.textPrimary,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                if (ctx.code != null)
+                  Text(
+                    '${ctx.assetType == 'fund' ? '基金' : '股票'} · ${ctx.code}  已从持仓自动填充',
+                    style: const TextStyle(
+                      color: AppTheme.textMuted,
+                      fontSize: 12,
+                    ),
+                  ),
+              ],
+            ),
+          ),
         ],
       ),
     );
@@ -338,33 +417,109 @@ class _RangeCard extends StatelessWidget {
 class _ZeroCostActionCard extends StatelessWidget {
   final _HarvestPlan plan;
   final String unit;
+  final String? stockName;
 
-  const _ZeroCostActionCard({required this.plan, required this.unit});
+  const _ZeroCostActionCard({
+    required this.plan,
+    required this.unit,
+    this.stockName,
+  });
 
   @override
   Widget build(BuildContext context) {
     final canZero = plan.gapAfterSell <= 0 && plan.zeroCostSellQty > 0;
-    return _InfoCard(
-      title: '零成本收割提示',
-      children: [
-        _MetricLine(
-          label: '触发后回收数量',
-          value: '${Formatters.quantity(plan.zeroCostSellQty)}$unit',
-          color: AppTheme.accentGold,
+    final hasData = plan.zeroCostSellQty > 0;
+
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: canZero
+              ? AppTheme.accentGold.withValues(alpha: 0.6)
+              : AppTheme.borderColor,
+          width: canZero ? 1.5 : 0.5,
         ),
-        _MetricLine(
-          label: '预计回收现金',
-          value: Formatters.largeNumber(plan.recoveredAtUpper),
-          color: AppTheme.primaryGreen,
-        ),
-        _MetricLine(
-          label: canZero ? '剩余零成本仓位' : '仍差本金',
-          value: canZero
-              ? '${Formatters.quantity(plan.freeQuantity)}$unit'
-              : Formatters.largeNumber(plan.gapAfterSell),
-          color: canZero ? AppTheme.accentGold : AppTheme.riskRed,
-        ),
-      ],
+        gradient: canZero
+            ? LinearGradient(
+                colors: [
+                  AppTheme.accentGold.withValues(alpha: 0.12),
+                  AppTheme.primaryGreen.withValues(alpha: 0.06),
+                ],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              )
+            : null,
+        color: canZero ? null : AppTheme.bgCard,
+      ),
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                canZero ? Icons.emoji_events : Icons.auto_graph_outlined,
+                color: canZero ? AppTheme.accentGold : AppTheme.textSecondary,
+                size: 18,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                '零成本收割提示',
+                style: TextStyle(
+                  color: canZero ? AppTheme.accentGold : AppTheme.textPrimary,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          if (canZero && hasData) ...[
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: AppTheme.accentGold.withValues(alpha: 0.10),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(
+                    color: AppTheme.accentGold.withValues(alpha: 0.4)),
+              ),
+              child: Text(
+                '卖出 ${Formatters.quantity(plan.zeroCostSellQty)}$unit（触发价 ¥${Formatters.price(plan.upperPrice)}），'
+                '即可让剩余 ${Formatters.quantity(plan.freeQuantity)}$unit${stockName != null ? ' 的 $stockName' : ''} 持仓成本降至 0 元！',
+                style: const TextStyle(
+                  color: AppTheme.accentGold,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
+                  height: 1.5,
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+          ],
+          _MetricLine(
+            label: '触发后回收数量',
+            value: hasData
+                ? '${Formatters.quantity(plan.zeroCostSellQty)}$unit'
+                : '—',
+            color: AppTheme.accentGold,
+          ),
+          _MetricLine(
+            label: '预计回收现金',
+            value: hasData
+                ? Formatters.largeNumber(plan.recoveredAtUpper)
+                : '—',
+            color: AppTheme.primaryGreen,
+          ),
+          _MetricLine(
+            label: canZero ? '剩余零成本仓位' : '回收后仍差本金',
+            value: canZero
+                ? '${Formatters.quantity(plan.freeQuantity)}$unit'
+                : Formatters.largeNumber(plan.gapAfterSell),
+            color: canZero ? AppTheme.accentGold : AppTheme.riskRed,
+          ),
+        ],
+      ),
     );
   }
 }

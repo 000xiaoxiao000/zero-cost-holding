@@ -6,7 +6,11 @@ import '../theme/app_theme.dart';
 import '../utils/formatters.dart';
 import '../providers/holding_providers.dart';
 import '../models/holding_batch.dart';
+import '../models/stock_context.dart';
 import 'add_holding_batch_screen.dart';
+import 'harvest_calculator_screen.dart';
+import 'seed_plan_screen.dart';
+import 'seed_screening_screen.dart';
 import 'zero_cost_vault_screen.dart';
 
 class HoldingTrackerScreen extends ConsumerStatefulWidget {
@@ -669,6 +673,8 @@ class _HoldingCard extends ConsumerWidget {
             ),
           ),
           const Divider(height: 20, indent: 16, endIndent: 16),
+          _FlowActionRow(position: position),
+          const Divider(height: 20, indent: 16, endIndent: 16),
           ...position.batches.map((b) => _BatchRow(batch: b)),
           const SizedBox(height: 8),
         ],
@@ -708,6 +714,130 @@ class _HoldingCard extends ConsumerWidget {
           assetType: position.assetType,
           stockCode: position.stockCode,
         );
+  }
+}
+
+class _FlowActionRow extends StatelessWidget {
+  final HoldingPosition position;
+  const _FlowActionRow({required this.position});
+
+  StockContext _buildContext() => StockContext(
+        code: position.stockCode,
+        name: position.stockName,
+        assetType: position.assetType,
+        currentPrice: position.avgHoldingCost > 0 ? position.avgHoldingCost : null,
+        remainingCost: position.effectiveRemainingCost,
+        remainingQty: position.totalRemaining,
+        avgCostPrice: position.avgHoldingCost,
+      );
+
+  @override
+  Widget build(BuildContext context) {
+    final ctx = _buildContext();
+    final canHarvest = position.totalRemaining > 0 && position.effectiveRemainingCost > 0;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      child: Row(
+        children: [
+          Expanded(
+            child: _FlowButton(
+              icon: Icons.auto_graph_outlined,
+              label: '计算收割',
+              color: AppTheme.accentGold,
+              enabled: canHarvest,
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => HarvestCalculatorScreen(stockContext: ctx),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: _FlowButton(
+              icon: Icons.grass_outlined,
+              label: '继续播种',
+              color: AppTheme.primaryGreen,
+              enabled: true,
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => SeedPlanScreen(stockContext: ctx),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: _FlowButton(
+              icon: Icons.health_and_safety_outlined,
+              label: '重新排雷',
+              color: AppTheme.accent,
+              enabled: true,
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => SeedScreeningScreen(stockContext: ctx),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _FlowButton extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final Color color;
+  final bool enabled;
+  final VoidCallback onTap;
+
+  const _FlowButton({
+    required this.icon,
+    required this.label,
+    required this.color,
+    required this.enabled,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: enabled ? onTap : null,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 9),
+        decoration: BoxDecoration(
+          color: enabled
+              ? color.withValues(alpha: 0.10)
+              : AppTheme.bgCardLight,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: enabled ? color.withValues(alpha: 0.4) : AppTheme.borderColor,
+          ),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon,
+                size: 14,
+                color: enabled ? color : AppTheme.textMuted),
+            const SizedBox(width: 5),
+            Text(
+              label,
+              style: TextStyle(
+                color: enabled ? color : AppTheme.textMuted,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 

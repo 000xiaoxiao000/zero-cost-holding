@@ -15,36 +15,35 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
+  // 5个底部标签：计划 / 自选 / 持仓 / 排雷 / 策略
   int _currentIndex = 0;
 
+  // "计划"标签内的子页面 tab（0=播种 1=收割）
+  int _planSubIndex = 0;
+
   Widget get _currentPage {
-    late final Widget page;
     switch (_currentIndex) {
       case 0:
-        page = const SeedPlanScreen();
-        break;
+        return _PlanTabPage(
+          key: const ValueKey('tab-plan'),
+          subIndex: _planSubIndex,
+          onSubIndexChanged: (i) => setState(() => _planSubIndex = i),
+        );
       case 1:
-        page = const HarvestCalculatorScreen();
-        break;
+        return const WatchlistScreen(key: ValueKey('tab-watchlist'));
       case 2:
-        page = const WatchlistScreen();
-        break;
+        return const HoldingTrackerScreen(key: ValueKey('tab-holding'));
       case 3:
-        page = const HoldingTrackerScreen();
-        break;
+        return const SeedScreeningScreen(key: ValueKey('tab-screen'));
       case 4:
-        page = const SeedScreeningScreen();
-        break;
-      case 5:
-        page = const StrategyScreen();
-        break;
+        return const StrategyScreen(key: ValueKey('tab-strategy'));
       default:
-        page = const SeedPlanScreen();
+        return _PlanTabPage(
+          key: const ValueKey('tab-plan'),
+          subIndex: _planSubIndex,
+          onSubIndexChanged: (i) => setState(() => _planSubIndex = i),
+        );
     }
-    return KeyedSubtree(
-      key: ValueKey('tab-$_currentIndex'),
-      child: page,
-    );
   }
 
   @override
@@ -63,27 +62,166 @@ class _HomeScreenState extends State<HomeScreen> {
           items: const [
             BottomNavigationBarItem(
               icon: Icon(Icons.grass_outlined),
-              label: '播种',
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.auto_graph_outlined),
-              label: '收割',
+              activeIcon: Icon(Icons.grass),
+              label: '计划',
             ),
             BottomNavigationBarItem(
               icon: Icon(Icons.bookmark_outline),
+              activeIcon: Icon(Icons.bookmark),
               label: '自选',
             ),
             BottomNavigationBarItem(
               icon: Icon(Icons.account_balance_wallet_outlined),
+              activeIcon: Icon(Icons.account_balance_wallet),
               label: '持仓',
             ),
             BottomNavigationBarItem(
               icon: Icon(Icons.health_and_safety_outlined),
+              activeIcon: Icon(Icons.health_and_safety),
               label: '排雷',
             ),
             BottomNavigationBarItem(
               icon: Icon(Icons.rule_outlined),
+              activeIcon: Icon(Icons.rule),
               label: '策略',
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// "计划"标签页：顶部双 Tab 切换播种计划 / 收割计算
+class _PlanTabPage extends StatelessWidget {
+  final int subIndex;
+  final ValueChanged<int> onSubIndexChanged;
+
+  const _PlanTabPage({
+    super.key,
+    required this.subIndex,
+    required this.onSubIndexChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        // 顶部安全区 + 标签切换条
+        Container(
+          color: AppTheme.bgCard,
+          padding: EdgeInsets.only(
+            top: MediaQuery.of(context).padding.top + 8,
+            left: 16,
+            right: 16,
+            bottom: 10,
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: _PlanSubTab(
+                  icon: Icons.grass_outlined,
+                  label: '播种计划',
+                  selected: subIndex == 0,
+                  onTap: () => onSubIndexChanged(0),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _PlanSubTab(
+                  icon: Icons.auto_graph_outlined,
+                  label: '收割计算',
+                  selected: subIndex == 1,
+                  onTap: () => onSubIndexChanged(1),
+                ),
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: IndexedStack(
+            index: subIndex,
+            children: const [
+              _SeedPlanBody(),
+              _HarvestBody(),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// 用 StatefulWidget 包一层，保持各子页面状态不丢失
+class _SeedPlanBody extends StatefulWidget {
+  const _SeedPlanBody();
+  @override
+  State<_SeedPlanBody> createState() => _SeedPlanBodyState();
+}
+
+class _SeedPlanBodyState extends State<_SeedPlanBody> {
+  @override
+  Widget build(BuildContext context) => const SeedPlanScreen();
+}
+
+class _HarvestBody extends StatefulWidget {
+  const _HarvestBody();
+  @override
+  State<_HarvestBody> createState() => _HarvestBodyState();
+}
+
+class _HarvestBodyState extends State<_HarvestBody> {
+  @override
+  Widget build(BuildContext context) => const HarvestCalculatorScreen();
+}
+
+class _PlanSubTab extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _PlanSubTab({
+    required this.icon,
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        padding: const EdgeInsets.symmetric(vertical: 10),
+        decoration: BoxDecoration(
+          color: selected
+              ? AppTheme.accent.withValues(alpha: 0.15)
+              : AppTheme.bgCardLight,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color:
+                selected ? AppTheme.accent : AppTheme.borderColor,
+          ),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              icon,
+              size: 16,
+              color: selected ? AppTheme.accent : AppTheme.textSecondary,
+            ),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: TextStyle(
+                color: selected ? AppTheme.accent : AppTheme.textSecondary,
+                fontSize: 13,
+                fontWeight:
+                    selected ? FontWeight.w700 : FontWeight.normal,
+              ),
             ),
           ],
         ),
