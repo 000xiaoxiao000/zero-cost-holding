@@ -494,24 +494,29 @@ class _SearchDropdown extends StatelessWidget {
     return Container(
       margin: const EdgeInsets.only(top: 4),
       decoration: BoxDecoration(
-        color: AppTheme.bgCardLight,
         borderRadius: BorderRadius.circular(8),
         border: Border.all(color: AppTheme.borderColor, width: 0.5),
       ),
-      child: Column(
-        children: results
-            .take(5)
-            .map((s) => ListTile(
-                  dense: true,
-                  title: Text(s.name,
-                      style: const TextStyle(
-                          color: AppTheme.textPrimary, fontSize: 14)),
-                  subtitle: Text('${s.market} · ${s.code}',
-                      style: const TextStyle(
-                          color: AppTheme.textMuted, fontSize: 12)),
-                  onTap: () => onSelect(s),
-                ))
-            .toList(),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(8),
+        child: Material(
+          color: AppTheme.bgCardLight,
+          child: Column(
+            children: results
+                .take(5)
+                .map((s) => ListTile(
+                      dense: true,
+                      title: Text(s.name,
+                          style: const TextStyle(
+                              color: AppTheme.textPrimary, fontSize: 14)),
+                      subtitle: Text('${s.market} · ${s.code}',
+                          style: const TextStyle(
+                              color: AppTheme.textMuted, fontSize: 12)),
+                      onTap: () => onSelect(s),
+                    ))
+                .toList(),
+          ),
+        ),
       ),
     );
   }

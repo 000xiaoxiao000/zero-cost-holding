@@ -163,7 +163,7 @@ class _IntroCard extends StatelessWidget {
           ),
           SizedBox(height: 8),
           Text(
-            '用网格或ATR计算纪律价位，只输出策略建议提示，不连接券商、不触达执行。',
+            '用网格或ATR计算纪律价位，只输出策略建议提示。',
             style: TextStyle(
               color: AppTheme.textSecondary,
               fontSize: 13,

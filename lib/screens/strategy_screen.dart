@@ -205,7 +205,7 @@ class _HeaderCard extends StatelessWidget {
           ),
           SizedBox(height: 8),
           Text(
-            '本 App 把股票和基金自持拆成四件事：选种、播种、回本、留种。它只做计划、计算和记录，不提供标的推荐、券商执行或代客管理。',
+            '本 App 把股票和基金自持拆成四件事：选种、播种、回本、留种。它只做计划、计算和记录，行情数据来自合规金融数据服务商，不提供标的推荐或代客管理。',
             style: TextStyle(
                 color: AppTheme.textSecondary, fontSize: 13, height: 1.45),
           ),

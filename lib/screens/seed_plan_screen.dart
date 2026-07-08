@@ -126,7 +126,7 @@ class _SeedPlanScreenState extends State<SeedPlanScreen> {
           const SizedBox(height: 16),
           _SectionTitle(
             title: '分批播种表',
-            subtitle: '按输入参数自动推演，不连接券商账户',
+            subtitle: '按输入参数自动推演',
           ),
           const SizedBox(height: 10),
           if (plan.isEmpty)
