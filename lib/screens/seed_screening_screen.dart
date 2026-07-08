@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../models/stock.dart';
 import '../services/stock_api_service.dart';
 import '../theme/app_theme.dart';
 
@@ -55,9 +56,9 @@ class _SeedScreeningScreenState extends State<SeedScreeningScreen> {
   }
 
   Future<void> _autoScreen() async {
-    final code = _codeController.text.trim();
-    if (code.isEmpty) {
-      setState(() => _autoStatus = '请先输入股票代码。');
+    String input = _codeController.text.trim();
+    if (input.isEmpty) {
+      setState(() => _autoStatus = '请先输入股票代码或名称。');
       return;
     }
 
@@ -68,6 +69,30 @@ class _SeedScreeningScreenState extends State<SeedScreeningScreen> {
 
     try {
       final service = StockApiService();
+
+      // 若输入非纯数字，先通过名称搜索解析出代码和市场
+      if (!RegExp(r'^\d+$').hasMatch(input)) {
+        setState(() => _autoStatus = '正在搜索「$input」...');
+        final results = await service.searchByName(input);
+        if (!mounted) return;
+        if (results.isEmpty) {
+          setState(() {
+            _isAutoLoading = false;
+            _autoStatus = '未找到「$input」对应的股票，请确认名称或改用代码。';
+          });
+          return;
+        }
+        final matched = results.first;
+        input = matched.code;
+        setState(() {
+          _codeController.text = matched.code;
+          _nameController.text = matched.name;
+          _market = matched.market;
+          _autoStatus = '已匹配到「${matched.name}」(${matched.code})，正在拉取数据...';
+        });
+      }
+
+      final code = input;
       final stock = await service.fetchStockQuote(code, _market);
       final klines = await service.fetchKlineDaily(code, _market, limit: 120);
       final riskData = await service.fetchAutoRiskData(code, _market);
@@ -411,7 +436,7 @@ class _SeedScreeningScreenState extends State<SeedScreeningScreen> {
   }
 }
 
-class _AutoScreenCard extends StatelessWidget {
+class _AutoScreenCard extends StatefulWidget {
   final TextEditingController codeController;
   final TextEditingController nameController;
   final String market;
@@ -431,6 +456,87 @@ class _AutoScreenCard extends StatelessWidget {
     required this.onMarketChanged,
     required this.onFetch,
   });
+
+  @override
+  State<_AutoScreenCard> createState() => _AutoScreenCardState();
+}
+
+class _AutoScreenCardState extends State<_AutoScreenCard> {
+  List<Stock> _suggestions = [];
+  bool _searching = false;
+  OverlayEntry? _overlayEntry;
+  final LayerLink _layerLink = LayerLink();
+
+  bool get _isCodeInput =>
+      RegExp(r'^\d+$').hasMatch(widget.codeController.text.trim());
+
+  Future<void> _onCodeChanged(String value) async {
+    widget.onChanged();
+    _removeOverlay();
+    final trimmed = value.trim();
+    if (trimmed.isEmpty || _isCodeInput) {
+      setState(() => _suggestions = []);
+      return;
+    }
+    if (trimmed.length < 1) return;
+
+    setState(() => _searching = true);
+    final results = await StockApiService().searchByName(trimmed);
+    if (!mounted) return;
+    setState(() {
+      _suggestions = results;
+      _searching = false;
+    });
+    if (results.isNotEmpty) _showOverlay();
+  }
+
+  void _selectSuggestion(Stock stock) {
+    widget.codeController.text = stock.code;
+    widget.nameController.text = stock.name;
+    widget.onMarketChanged(stock.market);
+    widget.onChanged();
+    setState(() => _suggestions = []);
+    _removeOverlay();
+  }
+
+  void _showOverlay() {
+    _removeOverlay();
+    final overlay = Overlay.of(context);
+    _overlayEntry = OverlayEntry(
+      builder: (ctx) => Positioned(
+        width: _getFieldWidth(),
+        child: CompositedTransformFollower(
+          link: _layerLink,
+          showWhenUnlinked: false,
+          offset: const Offset(0, 52),
+          child: _SuggestionDropdown(
+            suggestions: _suggestions,
+            onSelect: _selectSuggestion,
+            onDismiss: _removeOverlay,
+          ),
+        ),
+      ),
+    );
+    overlay.insert(_overlayEntry!);
+  }
+
+  double _getFieldWidth() {
+    final box = context.findRenderObject() as RenderBox?;
+    if (box == null) return 200;
+    // approximate: half width minus padding and gap
+    return (box.size.width - 32 - 12) / 2;
+  }
+
+  void _removeOverlay() {
+    _overlayEntry?.remove();
+    _overlayEntry = null;
+  }
+
+  @override
+  void dispose() {
+    _removeOverlay();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -455,34 +561,54 @@ class _AutoScreenCard extends StatelessWidget {
           const SizedBox(height: 12),
           _TextFieldLine(
             label: '标的名称',
-            controller: nameController,
+            controller: widget.nameController,
             hint: '例：润和软件 / 沪深300ETF',
-            onChanged: onChanged,
+            onChanged: widget.onChanged,
           ),
           const SizedBox(height: 12),
           Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     const Text(
-                      '股票代码',
+                      '股票代码 / 名称',
                       style: TextStyle(
                         color: AppTheme.textSecondary,
                         fontSize: 12,
                       ),
                     ),
                     const SizedBox(height: 6),
-                    TextField(
-                      controller: codeController,
-                      keyboardType: TextInputType.number,
-                      inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                      style: const TextStyle(
-                        color: AppTheme.textPrimary,
-                        fontSize: 14,
+                    CompositedTransformTarget(
+                      link: _layerLink,
+                      child: TextField(
+                        controller: widget.codeController,
+                        keyboardType: TextInputType.text,
+                        style: const TextStyle(
+                          color: AppTheme.textPrimary,
+                          fontSize: 14,
+                        ),
+                        decoration: InputDecoration(
+                          hintText: '代码或名称',
+                          suffixIcon: _searching
+                              ? const Padding(
+                                  padding: EdgeInsets.all(12),
+                                  child: SizedBox(
+                                    width: 14,
+                                    height: 14,
+                                    child: CircularProgressIndicator(
+                                        strokeWidth: 1.5),
+                                  ),
+                                )
+                              : null,
+                        ),
+                        onChanged: _onCodeChanged,
+                        onTap: () {
+                          if (_suggestions.isNotEmpty) _showOverlay();
+                        },
                       ),
-                      decoration: const InputDecoration(hintText: '例：600519'),
                     ),
                   ],
                 ),
@@ -503,8 +629,8 @@ class _AutoScreenCard extends StatelessWidget {
                     _ThreeChoice(
                       labels: const ['沪市', '深市'],
                       values: const ['SH', 'SZ'],
-                      selected: market,
-                      onChanged: onMarketChanged,
+                      selected: widget.market,
+                      onChanged: widget.onMarketChanged,
                     ),
                   ],
                 ),
@@ -516,15 +642,15 @@ class _AutoScreenCard extends StatelessWidget {
             width: double.infinity,
             height: 46,
             child: ElevatedButton.icon(
-              onPressed: isLoading ? null : onFetch,
-              icon: isLoading
+              onPressed: widget.isLoading ? null : widget.onFetch,
+              icon: widget.isLoading
                   ? const SizedBox(
                       width: 16,
                       height: 16,
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
                   : const Icon(Icons.cloud_sync_outlined, size: 18),
-              label: Text(isLoading ? '自动排雷中' : '自动拉取并排雷'),
+              label: Text(widget.isLoading ? '自动排雷中' : '自动拉取并排雷'),
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppTheme.accent,
                 foregroundColor: Colors.white,
@@ -536,7 +662,7 @@ class _AutoScreenCard extends StatelessWidget {
           ),
           const SizedBox(height: 10),
           Text(
-            status,
+            widget.status,
             style: const TextStyle(
               color: AppTheme.textSecondary,
               fontSize: 12,
@@ -544,6 +670,99 @@ class _AutoScreenCard extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _SuggestionDropdown extends StatelessWidget {
+  final List<Stock> suggestions;
+  final ValueChanged<Stock> onSelect;
+  final VoidCallback onDismiss;
+
+  const _SuggestionDropdown({
+    required this.suggestions,
+    required this.onSelect,
+    required this.onDismiss,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: Container(
+        constraints: const BoxConstraints(maxHeight: 220),
+        decoration: BoxDecoration(
+          color: AppTheme.bgCard,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: AppTheme.accent.withValues(alpha: 0.4)),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.4),
+              blurRadius: 12,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: ListView.separated(
+          padding: EdgeInsets.zero,
+          shrinkWrap: true,
+          itemCount: suggestions.length,
+          separatorBuilder: (_, __) => Divider(
+            height: 1,
+            color: AppTheme.borderColor,
+          ),
+          itemBuilder: (ctx, i) {
+            final s = suggestions[i];
+            return InkWell(
+              borderRadius: BorderRadius.circular(10),
+              onTap: () => onSelect(s),
+              child: Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        s.name,
+                        style: const TextStyle(
+                          color: AppTheme.textPrimary,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      s.code,
+                      style: const TextStyle(
+                        color: AppTheme.textSecondary,
+                        fontSize: 12,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 5, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: AppTheme.accent.withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text(
+                        s.market,
+                        style: TextStyle(
+                          color: AppTheme.accent,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        ),
       ),
     );
   }

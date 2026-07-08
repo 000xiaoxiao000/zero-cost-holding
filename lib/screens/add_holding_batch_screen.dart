@@ -4,9 +4,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../theme/app_theme.dart';
 import '../utils/formatters.dart';
 import '../providers/holding_providers.dart';
-import '../providers/stock_providers.dart';
 import '../models/holding_batch.dart';
 import '../models/stock.dart';
+import '../services/stock_api_service.dart';
 
 class AddHoldingBatchScreen extends ConsumerStatefulWidget {
   const AddHoldingBatchScreen({super.key});
@@ -46,14 +46,15 @@ class _AddHoldingBatchScreenState extends ConsumerState<AddHoldingBatchScreen> {
 
   Future<void> _searchStock(String keyword) async {
     if (_isFund) return;
-    if (keyword.length < 2) {
+    if (keyword.trim().isEmpty) {
       setState(() => _searchResults = []);
       return;
     }
     setState(() => _isSearching = true);
-    await ref.read(stockSearchProvider.notifier).search(keyword);
+    final results = await StockApiService().searchByName(keyword.trim());
+    if (!mounted) return;
     setState(() {
-      _searchResults = ref.read(stockSearchProvider);
+      _searchResults = results;
       _isSearching = false;
     });
   }
@@ -447,7 +448,7 @@ class _StockCodeField extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(isFund ? '基金代码' : '股票代码',
+        Text(isFund ? '基金代码' : '股票代码 / 名称',
             style:
                 const TextStyle(color: AppTheme.textSecondary, fontSize: 13)),
         const SizedBox(height: 6),
@@ -455,7 +456,7 @@ class _StockCodeField extends StatelessWidget {
           controller: controller,
           style: const TextStyle(color: AppTheme.textPrimary),
           decoration: InputDecoration(
-            hintText: isFund ? '例：000300' : '例：600519',
+            hintText: isFund ? '例：000300' : '代码或名称，如 600519 / 贵州茅台',
             suffixIcon: isFund
                 ? null
                 : isSearching
@@ -475,7 +476,7 @@ class _StockCodeField extends StatelessWidget {
                       ),
           ),
           onChanged: onChanged,
-          validator: (v) => v!.isEmpty ? '请输入代码' : null,
+          validator: (v) => v!.isEmpty ? '请输入代码或名称' : null,
         ),
       ],
     );

@@ -69,7 +69,7 @@ class StockSearchNotifier extends StateNotifier<List<Stock>> {
       return;
     }
     isLoading = true;
-    final results = await StockApiService().searchStocks(keyword);
+    final results = await StockApiService().searchByName(keyword);
     isLoading = false;
     state = results;
   }

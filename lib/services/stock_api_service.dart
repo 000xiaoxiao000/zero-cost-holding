@@ -77,10 +77,10 @@ class StockApiService {
         .toList();
   }
 
-  /// 搜索股票
+  /// 搜索股票（支持名称、代码、拼音首字母）
   Future<List<Stock>> searchStocks(String keyword) async {
     if (keyword.trim().isEmpty) return [];
-    if (_eastMoneySearchToken.isEmpty) return [];
+    if (_eastMoneySearchToken.isEmpty) return searchByName(keyword);
 
     try {
       final resp = await _dio.get(
@@ -93,9 +93,11 @@ class StockApiService {
         },
       );
       final data = resp.data;
-      if (data == null || data['QuotationCodeTable'] == null) return [];
+      if (data == null || data['QuotationCodeTable'] == null) {
+        return searchByName(keyword);
+      }
       final items = data['QuotationCodeTable']['Data'] as List? ?? [];
-      return items
+      final results = items
           .where((e) => e['SecurityType'] == '1' || e['SecurityType'] == '2')
           .map((e) {
         final mkt = e['SecurityType'] == '1' ? 'SH' : 'SZ';
@@ -105,6 +107,54 @@ class StockApiService {
           market: mkt,
         );
       }).toList();
+      if (results.isEmpty) return searchByName(keyword);
+      return results;
+    } catch (_) {
+      return searchByName(keyword);
+    }
+  }
+
+  /// 通过东方财富公开 suggest 接口搜索（不需要 token）
+  Future<List<Stock>> searchByName(String keyword) async {
+    if (keyword.trim().isEmpty) return [];
+    try {
+      final resp = await _dio.get(
+        'https://suggest3.eastmoney.com/api/suggest/get',
+        queryParameters: {
+          'input': keyword.trim(),
+          'type': '14',
+          'token': 'D43BF722C8E33BDC906FB84D85E326E8',
+          'count': 20,
+          'markettype': '',
+          'mktnum': '',
+          'jys': '',
+          'classify': '',
+          'securitytype': '',
+        },
+      );
+      final data = resp.data;
+      if (data == null) return [];
+      final table = data['QuotationCodeTable'];
+      if (table == null) return [];
+      final items = table['Data'] as List? ?? [];
+      return items
+          .where((e) {
+            final type = e['SecurityType']?.toString() ?? '';
+            final market = e['MktNum']?.toString() ?? '';
+            return (type == '1' || type == '2') &&
+                (market == '0' || market == '1');
+          })
+          .map((e) {
+            final mktNum = e['MktNum']?.toString() ?? '0';
+            final mkt = mktNum == '1' ? 'SH' : 'SZ';
+            return Stock(
+              code: e['Code'] ?? '',
+              name: e['Name'] ?? '',
+              market: mkt,
+            );
+          })
+          .where((s) => s.code.isNotEmpty)
+          .toList();
     } catch (_) {
       return [];
     }
