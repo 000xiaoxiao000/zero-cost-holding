@@ -64,7 +64,7 @@ class _SeedScreeningScreenState extends State<SeedScreeningScreen> {
 
     setState(() {
       _isAutoLoading = true;
-      _autoStatus = '正在拉取东方财富公开行情、K线、财务、质押和分红数据...';
+      _autoStatus = '正在解析标的...';
     });
 
     try {
@@ -93,37 +93,66 @@ class _SeedScreeningScreenState extends State<SeedScreeningScreen> {
       }
 
       final code = input;
-      final stock = await service.fetchStockQuote(code, _market);
-      final klines = await service.fetchKlineDaily(code, _market, limit: 120);
-      final riskData = await service.fetchAutoRiskData(code, _market);
+
+      // 并发拉取所有数据，历史百分位单独拉（耗时较长）
+      setState(() => _autoStatus = '正在拉取行情、K线、财务、质押、分红数据...');
+      final results = await Future.wait([
+        service.fetchStockQuote(code, _market),
+        service.fetchKlineDaily(code, _market, limit: 120),
+        service.fetchAutoRiskData(code, _market),
+      ]);
 
       if (!mounted) return;
+      final stock = results[0] as Stock?;
+      final klines = results[1] as List<Map<String, dynamic>>;
+      final riskData = results[2] as AutoRiskData;
+
       if (stock == null) {
         setState(() {
           _isAutoLoading = false;
-          _autoStatus = '未拉取到数据，请检查代码和市场。';
+          _autoStatus = '行情数据未取到，请检查代码和市场是否正确。';
         });
         return;
       }
 
+      // 单独拉 PE/PB 历史百分位（接口较慢，拉完再刷新一次）
+      setState(() => _autoStatus = '正在计算 PE/PB 历史百分位...');
+      final percentile = await service.fetchValuationPercentile(code, _market);
+      if (!mounted) return;
+
       final trend = _detectTrend(klines);
       final price = stock.price > 0 ? stock.price : _currentPrice;
+
+      // 退市风险：名称含"退"或代码进入退市整理（688/4/8开头的特殊板块除外）
+      final nameUpper = stock.name.toUpperCase();
+      final isStFlag = nameUpper.contains('ST');
+      final delistFlag = stock.name.contains('退') ||
+          nameUpper.contains('*ST') ||
+          nameUpper.startsWith('PT');
+
+      // PE/PB 百分位：优先用真实历史百分位，取不到时降级用当前绝对值估算
+      final pePct = percentile.pePercentile ??
+          _fallbackPePercentile(stock.pe);
+      final pbPct = percentile.pbPercentile ??
+          _fallbackPbPercentile(stock.pb);
+
+      final peSource = percentile.pePercentile != null ? '历史百分位' : '估算';
+      final pbSource = percentile.pbPercentile != null ? '历史百分位' : '估算';
+
       setState(() {
         _nameController.text = stock.name.isEmpty ? code : stock.name;
         _currentPriceController.text =
             price > 0 ? price.toStringAsFixed(2) : _currentPriceController.text;
-        _pePercentileController.text =
-            _estimatePePercentile(stock.pe).toStringAsFixed(0);
-        _pbPercentileController.text =
-            _estimatePbPercentile(stock.pb).toStringAsFixed(0);
+        _pePercentileController.text = pePct.toString();
+        _pbPercentileController.text = pbPct.toString();
         _buyTriggerController.text = price > 0
             ? (price * 0.92).toStringAsFixed(2)
             : _buyTriggerController.text;
         _harvestTriggerController.text = price > 0
             ? (price * 1.15).toStringAsFixed(2)
             : _harvestTriggerController.text;
-        _isSt = stock.name.toUpperCase().contains('ST');
-        _delistRisk = stock.name.contains('退');
+        _isSt = isStFlag;
+        _delistRisk = delistFlag;
         if (riskData.pledgeRatio != null) {
           _pledgeRatioController.text =
               riskData.pledgeRatio!.toStringAsFixed(2);
@@ -151,21 +180,29 @@ class _SeedScreeningScreenState extends State<SeedScreeningScreen> {
         }
         _industryCycle = trend;
         _isAutoLoading = false;
-        final deep = riskData.sourceNotes.isEmpty
-            ? '深度财务/质押/分红数据未取到，相关项仍需人工核验。'
-            : riskData.sourceNotes.join('，');
-        _autoStatus = '已自动填充：名称、现价、PE/PB估值分位、ST状态、趋势和触发价。$deep';
+
+        final notes = <String>[
+          'PE百分位=$pePct%($peSource)',
+          'PB百分位=$pbPct%($pbSource)',
+          if (isStFlag) 'ST状态已标记',
+          if (delistFlag) '退市风险已标记',
+        ];
+        final deepNotes = riskData.sourceNotes.isEmpty
+            ? ['财务/质押/分红数据未取到，相关项仍需人工核验']
+            : riskData.sourceNotes;
+        _autoStatus = '自动填充完成。${[...notes, ...deepNotes].join('，')}。';
       });
     } catch (e) {
       if (!mounted) return;
       setState(() {
         _isAutoLoading = false;
-        _autoStatus = '自动拉取失败，请稍后重试或手工录入。';
+        _autoStatus = '自动拉取失败：$e';
       });
     }
   }
 
-  int _estimatePePercentile(double pe) {
+  /// 真实百分位取不到时的绝对值降级估算（标注为估算）
+  int _fallbackPePercentile(double pe) {
     if (pe <= 0) return 50;
     if (pe <= 10) return 15;
     if (pe <= 15) return 25;
@@ -174,7 +211,7 @@ class _SeedScreeningScreenState extends State<SeedScreeningScreen> {
     return 90;
   }
 
-  int _estimatePbPercentile(double pb) {
+  int _fallbackPbPercentile(double pb) {
     if (pb <= 0) return 50;
     if (pb <= 1) return 20;
     if (pb <= 1.8) return 35;

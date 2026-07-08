@@ -385,69 +385,13 @@ class StockApiService {
   // 股票搜索（东方财富 suggest，无需 token）
   // ══════════════════════════════════════════════════════════════════════════
 
-  /// 通过名称、代码或拼音首字母搜索 A 股
-  /// 主源：东方财富 suggest（覆盖 Referer 为 eastmoney.com）
-  /// 备用：新浪财经 suggest（无 Referer 限制）
-  /// 通过名称、代码或拼音首字母搜索 A 股
-  /// 主源：腾讯财经 smartbox（UTF-8 JSON，无 Referer 限制）
-  /// 备用：东方财富 suggest（带正确 Referer）
+  /// 通过名称、代码或拼音首字母搜索 A 股（东方财富 searchapi）
   Future<List<Stock>> searchByName(String keyword) async {
     if (keyword.trim().isEmpty) return [];
-    List<Stock> result = await _searchQQ(keyword);
-    if (result.isEmpty) {
-      _log('搜索[$keyword] 腾讯无结果，降级东方财富');
-      result = await _searchEM(keyword);
-    }
-    return result;
+    return _searchEM(keyword);
   }
 
-  /// 腾讯财经 smartbox 搜索（主源）
-  /// 返回 UTF-8 JSON，支持代码/名称/拼音，无 Referer 限制
-  Future<List<Stock>> _searchQQ(String keyword) async {
-    try {
-      final resp = await _dio.get(
-        'https://smartbox.gtimg.cn/s3/',
-        queryParameters: {
-          'v': '2',
-          'ttype': '1',  // 1=股票
-          'query': keyword.trim(),
-        },
-        options: Options(
-          responseType: ResponseType.plain,
-          headers: {'Referer': 'https://gu.qq.com/'},
-        ),
-      );
-      final body = resp.data?.toString() ?? '';
-      // 格式: v_hint="sz300339^0^300339^润和软件^stock^..."
-      // 多条结果以 "~" 分隔，每条字段以 "^" 分隔
-      // 字段: 市场前缀代码 ^ 0 ^ 代码 ^ 名称 ^ 类型 ...
-      final match = RegExp(r'v_hint="([^"]*)"').firstMatch(body);
-      if (match == null || match.group(1)!.isEmpty) return [];
-
-      final entries = match.group(1)!.split('~');
-      final results = <Stock>[];
-      for (final entry in entries) {
-        final parts = entry.split('^');
-        if (parts.length < 4) continue;
-        final fullCode = parts[0].trim();  // 如 sz300339 / sh600519
-        final code = parts[2].trim();
-        final name = parts[3].trim();
-        if (!RegExp(r'^\d{6}$').hasMatch(code)) continue;
-        if (name.isEmpty) continue;
-        // 只保留 A 股：sh/sz 前缀
-        if (!fullCode.startsWith('sh') && !fullCode.startsWith('sz')) continue;
-        final market = fullCode.startsWith('sh') ? 'SH' : 'SZ';
-        results.add(Stock(code: code, name: name, market: market));
-      }
-      _log('搜索[QQ][$keyword] 结果: ${results.length} 条');
-      return results;
-    } catch (e) {
-      _log('搜索[QQ][$keyword] 异常: $e');
-      return [];
-    }
-  }
-
-  /// 东方财富 suggest 搜索（备用）
+  /// 东方财富 searchapi suggest 搜索（主源）
   Future<List<Stock>> _searchEM(String keyword) async {
     try {
       final resp = await _dio.get(
@@ -855,6 +799,73 @@ class StockApiService {
       'market_cap': stock.marketCap,
       'price': stock.price,
     };
+  }
+
+  /// 从东方财富历史估值数据计算 PE/PB 的真实历史百分位（近5年，约1200交易日）。
+  /// 返回 {pePercentile: double, pbPercentile: double}，取不到时返回 null。
+  Future<({int? pePercentile, int? pbPercentile})> fetchValuationPercentile(
+      String code, String market) async {
+    try {
+      final secid = _emSecid(code, market);
+      // 东方财富 F10 历史市盈率/市净率日数据（近1200条≈5年）
+      final resp = await _dio.get(
+        'https://push2his.eastmoney.com/api/qt/stock/fflow/daykline/get',
+        queryParameters: {
+          'lmt': 1200,
+          'klt': 101,
+          'secid': secid,
+          'fields1': 'f1,f2,f3,f7',
+          'fields2': 'f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61,f62,f63',
+          'ut': ApiConfig.emUtToken,
+        },
+      );
+      // 该接口不含 PE/PB，改用 datacenter 历史估值报表
+      _log('历史估值[datacenter] $code');
+    } catch (_) {}
+
+    // 东方财富数据中心历史 PE/PB（RPT_F10_PEandPB 或 RPT_VALUATION_HISTORY）
+    try {
+      final secuCode = '$code.${market == "SH" ? "SH" : "SZ"}';
+      final rows = await _fetchFirstReport(
+        reportNames: const [
+          'RPT_F10_PEandPB',
+          'RPT_VALUATION_HISTORY',
+          'RPT_F10_VALUATION',
+        ],
+        filters: ['(SECUCODE="$secuCode")', '(SECURITY_CODE="$code")'],
+        sortColumns: 'TRADE_DATE,REPORT_DATE',
+        pageSize: 1200,
+      );
+      if (rows.isNotEmpty) {
+        final pes = rows
+            .map((r) => _firstNum([r], const ['PE', 'PE_TTM', 'PELYR']))
+            .whereType<double>()
+            .where((v) => v > 0)
+            .toList();
+        final pbs = rows
+            .map((r) => _firstNum([r], const ['PB', 'PB_MRQ']))
+            .whereType<double>()
+            .where((v) => v > 0)
+            .toList();
+        final currentPe = pes.isNotEmpty ? pes.last : null;
+        final currentPb = pbs.isNotEmpty ? pbs.last : null;
+        final pePct = _percentileOf(pes, currentPe);
+        final pbPct = _percentileOf(pbs, currentPb);
+        _log('历史估值 $code PE百分位=$pePct PB百分位=$pbPct (${rows.length}条)');
+        return (pePercentile: pePct, pbPercentile: pbPct);
+      }
+    } catch (e) {
+      _log('历史估值[$code] 异常: $e');
+    }
+    return (pePercentile: null, pbPercentile: null);
+  }
+
+  /// 计算 value 在 series 中的历史百分位（0~100 整数）
+  int? _percentileOf(List<double> series, double? value) {
+    if (series.isEmpty || value == null) return null;
+    final sorted = List<double>.from(series)..sort();
+    final below = sorted.where((v) => v < value).length;
+    return ((below / sorted.length) * 100).round();
   }
 }
 

@@ -33,7 +33,7 @@ class ApiConfig {
 
   // ── 东方财富搜索/数据中心 ─────────────────────────────────────────────────
   static const String emSuggestBase =
-      'https://suggest3.eastmoney.com/api/suggest/get';
+      'https://searchapi.eastmoney.com/api/suggest/get';
   static const String emQuoteBase =
       'https://push2.eastmoney.com/api/qt/stock/get';
   static const String emKlineBase =
