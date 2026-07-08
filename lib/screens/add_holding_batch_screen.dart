@@ -1,0 +1,641 @@
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../theme/app_theme.dart';
+import '../utils/formatters.dart';
+import '../providers/holding_providers.dart';
+import '../providers/stock_providers.dart';
+import '../models/holding_batch.dart';
+import '../models/stock.dart';
+
+class AddHoldingBatchScreen extends ConsumerStatefulWidget {
+  const AddHoldingBatchScreen({super.key});
+
+  @override
+  ConsumerState<AddHoldingBatchScreen> createState() =>
+      _AddHoldingBatchScreenState();
+}
+
+class _AddHoldingBatchScreenState extends ConsumerState<AddHoldingBatchScreen> {
+  final _formKey = GlobalKey<FormState>();
+  final _codeController = TextEditingController();
+  final _nameController = TextEditingController();
+  final _priceController = TextEditingController();
+  final _qtyController = TextEditingController();
+  final _commissionController = TextEditingController(text: '0');
+  final _noteController = TextEditingController();
+
+  DateTime _buyDate = DateTime.now();
+  String _assetType = 'stock';
+  String _market = 'SH';
+  List<Stock> _searchResults = [];
+  bool _isSearching = false;
+
+  bool get _isFund => _assetType == 'fund';
+
+  @override
+  void dispose() {
+    _codeController.dispose();
+    _nameController.dispose();
+    _priceController.dispose();
+    _qtyController.dispose();
+    _commissionController.dispose();
+    _noteController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _searchStock(String keyword) async {
+    if (_isFund) return;
+    if (keyword.length < 2) {
+      setState(() => _searchResults = []);
+      return;
+    }
+    setState(() => _isSearching = true);
+    await ref.read(stockSearchProvider.notifier).search(keyword);
+    setState(() {
+      _searchResults = ref.read(stockSearchProvider);
+      _isSearching = false;
+    });
+  }
+
+  void _selectStock(Stock stock) {
+    _codeController.text = stock.code;
+    _nameController.text = stock.name;
+    _market = stock.market;
+    setState(() => _searchResults = []);
+    FocusScope.of(context).unfocus();
+  }
+
+  Future<void> _pickDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _buyDate,
+      firstDate: DateTime(2000),
+      lastDate: DateTime.now(),
+      builder: (ctx, child) => Theme(
+        data: Theme.of(ctx).copyWith(
+          colorScheme: const ColorScheme.dark(
+            primary: AppTheme.accent,
+            surface: AppTheme.bgCard,
+          ),
+        ),
+        child: child!,
+      ),
+    );
+    if (picked != null) setState(() => _buyDate = picked);
+  }
+
+  Future<void> _submit() async {
+    if (!_formKey.currentState!.validate()) return;
+    final batch = HoldingBatch(
+      assetType: _assetType,
+      stockCode: _codeController.text.trim(),
+      stockName: _nameController.text.trim(),
+      buyPrice: double.parse(_priceController.text),
+      quantity: double.parse(_qtyController.text),
+      commission: double.tryParse(_commissionController.text) ?? 0.0,
+      buyDate: _buyDate,
+      note: _noteController.text.trim().isEmpty
+          ? null
+          : _noteController.text.trim(),
+    );
+    await ref.read(holdingPositionsProvider.notifier).addBatch(batch);
+    if (mounted) Navigator.pop(context, true);
+  }
+
+  double get _totalCost {
+    final price = double.tryParse(_priceController.text) ?? 0.0;
+    final qty = double.tryParse(_qtyController.text) ?? 0;
+    final comm = double.tryParse(_commissionController.text) ?? 0.0;
+    return price * qty + comm;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('记录播种')),
+      body: GestureDetector(
+        onTap: () => FocusScope.of(context).unfocus(),
+        child: Form(
+          key: _formKey,
+          onChanged: () => setState(() {}),
+          child: ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
+              _FormSection(title: '标的信息', children: [
+                _AssetTypeSelector(
+                  assetType: _assetType,
+                  onChanged: (type) {
+                    setState(() {
+                      _assetType = type;
+                      _searchResults = [];
+                    });
+                  },
+                ),
+                const SizedBox(height: 12),
+                _StockCodeField(
+                  controller: _codeController,
+                  isSearching: _isSearching,
+                  assetType: _assetType,
+                  onChanged: _isFund ? (_) {} : _searchStock,
+                  onSearch: () => _searchStock(_codeController.text),
+                ),
+                if (!_isFund && _searchResults.isNotEmpty)
+                  _SearchDropdown(
+                      results: _searchResults, onSelect: _selectStock),
+                const SizedBox(height: 12),
+                _LabeledField(
+                  label: _isFund ? '基金名称' : '股票名称',
+                  controller: _nameController,
+                  hint: _isFund ? '例：沪深300ETF联接' : '自动填入或手动输入',
+                  validator: (v) => v!.isEmpty ? '请输入名称' : null,
+                ),
+                if (!_isFund) ...[
+                  const SizedBox(height: 12),
+                  _MarketSelector(
+                      market: _market,
+                      onChanged: (m) => setState(() => _market = m)),
+                ],
+              ]),
+              const SizedBox(height: 16),
+              _FormSection(title: '播种信息', children: [
+                _LabeledField(
+                  label: _isFund ? '配置净值' : '配置价格',
+                  controller: _priceController,
+                  hint: _isFund ? '例：1.2365' : '例：15.36',
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  inputFormatters: [
+                    if (_isFund)
+                      FilteringTextInputFormatter.allow(
+                          RegExp(r'^\d+\.?\d{0,4}'))
+                    else
+                      FilteringTextInputFormatter.allow(
+                          RegExp(r'^\d+\.?\d{0,2}'))
+                  ],
+                  validator: (v) {
+                    if (v == null || v.isEmpty) {
+                      return _isFund ? '请输入配置净值' : '请输入配置价格';
+                    }
+                    final n = double.tryParse(v);
+                    if (n == null || n <= 0) {
+                      return _isFund ? '净值必须大于0' : '价格必须大于0';
+                    }
+                    return null;
+                  },
+                ),
+                const SizedBox(height: 12),
+                _LabeledField(
+                  label: _isFund ? '配置份额' : '配置数量（股）',
+                  controller: _qtyController,
+                  hint: _isFund ? '例：8123.45' : '例：1000',
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  inputFormatters: [
+                    if (_isFund)
+                      FilteringTextInputFormatter.allow(
+                          RegExp(r'^\d+\.?\d{0,4}'))
+                    else
+                      FilteringTextInputFormatter.digitsOnly,
+                  ],
+                  validator: (v) {
+                    if (v == null || v.isEmpty) {
+                      return _isFund ? '请输入份额' : '请输入数量';
+                    }
+                    final n = double.tryParse(v);
+                    if (n == null || n <= 0) {
+                      return _isFund ? '份额必须大于0' : '数量必须大于0';
+                    }
+                    if (!_isFund && n % 100 != 0) {
+                      return 'A股数量须为100的倍数';
+                    }
+                    return null;
+                  },
+                ),
+                const SizedBox(height: 12),
+                _LabeledField(
+                  label: '佣金/手续费（元）',
+                  controller: _commissionController,
+                  hint: '例：5.00',
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  inputFormatters: [
+                    FilteringTextInputFormatter.allow(RegExp(r'^\d+\.?\d{0,2}'))
+                  ],
+                  validator: null,
+                ),
+                const SizedBox(height: 12),
+                _DatePickerField(date: _buyDate, onTap: _pickDate),
+                const SizedBox(height: 12),
+                _LabeledField(
+                  label: '备注（可选）',
+                  controller: _noteController,
+                  hint: _isFund ? '例：定投第一批，宽基低估' : '例：第一批建仓，估值低洼',
+                  validator: null,
+                ),
+              ]),
+              const SizedBox(height: 16),
+              if (_totalCost > 0) _CostPreview(totalCost: _totalCost),
+              const SizedBox(height: 24),
+              SizedBox(
+                width: double.infinity,
+                height: 50,
+                child: ElevatedButton(
+                  onPressed: _submit,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTheme.accent,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
+                  ),
+                  child: const Text('确认记录',
+                      style:
+                          TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                ),
+              ),
+              const SizedBox(height: 40),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ── Sub-widgets ───────────────────────────────────────────────────────────────
+
+class _FormSection extends StatelessWidget {
+  final String title;
+  final List<Widget> children;
+  const _FormSection({required this.title, required this.children});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppTheme.bgCard,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppTheme.borderColor, width: 0.5),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title,
+              style: const TextStyle(
+                  color: AppTheme.textPrimary,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600)),
+          const SizedBox(height: 14),
+          ...children,
+        ],
+      ),
+    );
+  }
+}
+
+class _LabeledField extends StatelessWidget {
+  final String label;
+  final TextEditingController controller;
+  final String hint;
+  final TextInputType? keyboardType;
+  final List<TextInputFormatter>? inputFormatters;
+  final String? Function(String?)? validator;
+
+  const _LabeledField({
+    required this.label,
+    required this.controller,
+    required this.hint,
+    this.keyboardType,
+    this.inputFormatters,
+    required this.validator,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label,
+            style:
+                const TextStyle(color: AppTheme.textSecondary, fontSize: 13)),
+        const SizedBox(height: 6),
+        TextFormField(
+          controller: controller,
+          keyboardType: keyboardType,
+          inputFormatters: inputFormatters,
+          style: const TextStyle(color: AppTheme.textPrimary),
+          decoration: InputDecoration(hintText: hint),
+          validator: validator,
+        ),
+      ],
+    );
+  }
+}
+
+class _AssetTypeSelector extends StatelessWidget {
+  final String assetType;
+  final ValueChanged<String> onChanged;
+
+  const _AssetTypeSelector({
+    required this.assetType,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('资产类型',
+            style: TextStyle(color: AppTheme.textSecondary, fontSize: 13)),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            _AssetTypeChip(
+              label: '股票',
+              icon: Icons.show_chart,
+              selected: assetType == 'stock',
+              onTap: () => onChanged('stock'),
+            ),
+            const SizedBox(width: 12),
+            _AssetTypeChip(
+              label: '基金',
+              icon: Icons.pie_chart_outline,
+              selected: assetType == 'fund',
+              onTap: () => onChanged('fund'),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _AssetTypeChip extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _AssetTypeChip({
+    required this.label,
+    required this.icon,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: GestureDetector(
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          decoration: BoxDecoration(
+            color: selected
+                ? AppTheme.accent.withValues(alpha: 0.15)
+                : AppTheme.bgCardLight,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: selected ? AppTheme.accent : AppTheme.borderColor,
+            ),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                icon,
+                size: 16,
+                color: selected ? AppTheme.accent : AppTheme.textSecondary,
+              ),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: TextStyle(
+                  color: selected ? AppTheme.accent : AppTheme.textSecondary,
+                  fontSize: 13,
+                  fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _StockCodeField extends StatelessWidget {
+  final TextEditingController controller;
+  final bool isSearching;
+  final String assetType;
+  final ValueChanged<String> onChanged;
+  final VoidCallback onSearch;
+
+  const _StockCodeField({
+    required this.controller,
+    required this.isSearching,
+    required this.assetType,
+    required this.onChanged,
+    required this.onSearch,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final isFund = assetType == 'fund';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(isFund ? '基金代码' : '股票代码',
+            style:
+                const TextStyle(color: AppTheme.textSecondary, fontSize: 13)),
+        const SizedBox(height: 6),
+        TextFormField(
+          controller: controller,
+          style: const TextStyle(color: AppTheme.textPrimary),
+          decoration: InputDecoration(
+            hintText: isFund ? '例：000300' : '例：600519',
+            suffixIcon: isFund
+                ? null
+                : isSearching
+                    ? const Padding(
+                        padding: EdgeInsets.all(12),
+                        child: SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: AppTheme.accent),
+                        ),
+                      )
+                    : IconButton(
+                        icon: const Icon(Icons.search,
+                            color: AppTheme.textMuted, size: 20),
+                        onPressed: onSearch,
+                      ),
+          ),
+          onChanged: onChanged,
+          validator: (v) => v!.isEmpty ? '请输入代码' : null,
+        ),
+      ],
+    );
+  }
+}
+
+class _SearchDropdown extends StatelessWidget {
+  final List<Stock> results;
+  final ValueChanged<Stock> onSelect;
+
+  const _SearchDropdown({required this.results, required this.onSelect});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(top: 4),
+      decoration: BoxDecoration(
+        color: AppTheme.bgCardLight,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppTheme.borderColor, width: 0.5),
+      ),
+      child: Column(
+        children: results
+            .take(5)
+            .map((s) => ListTile(
+                  dense: true,
+                  title: Text(s.name,
+                      style: const TextStyle(
+                          color: AppTheme.textPrimary, fontSize: 14)),
+                  subtitle: Text('${s.market} · ${s.code}',
+                      style: const TextStyle(
+                          color: AppTheme.textMuted, fontSize: 12)),
+                  onTap: () => onSelect(s),
+                ))
+            .toList(),
+      ),
+    );
+  }
+}
+
+class _MarketSelector extends StatelessWidget {
+  final String market;
+  final ValueChanged<String> onChanged;
+
+  const _MarketSelector({required this.market, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('市场',
+            style: TextStyle(color: AppTheme.textSecondary, fontSize: 13)),
+        const SizedBox(height: 8),
+        Row(
+          children: ['SH', 'SZ'].map((m) {
+            final selected = market == m;
+            return Padding(
+              padding: const EdgeInsets.only(right: 12),
+              child: GestureDetector(
+                onTap: () => onChanged(m),
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: selected
+                        ? AppTheme.accent.withValues(alpha: 0.15)
+                        : AppTheme.bgCardLight,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                        color:
+                            selected ? AppTheme.accent : AppTheme.borderColor),
+                  ),
+                  child: Text(
+                    m == 'SH' ? '上交所(SH)' : '深交所(SZ)',
+                    style: TextStyle(
+                      color:
+                          selected ? AppTheme.accent : AppTheme.textSecondary,
+                      fontSize: 13,
+                      fontWeight:
+                          selected ? FontWeight.w600 : FontWeight.normal,
+                    ),
+                  ),
+                ),
+              ),
+            );
+          }).toList(),
+        ),
+      ],
+    );
+  }
+}
+
+class _DatePickerField extends StatelessWidget {
+  final DateTime date;
+  final VoidCallback onTap;
+
+  const _DatePickerField({required this.date, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('记录日期',
+            style: TextStyle(color: AppTheme.textSecondary, fontSize: 13)),
+        const SizedBox(height: 6),
+        GestureDetector(
+          onTap: onTap,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+            decoration: BoxDecoration(
+              color: AppTheme.bgCardLight,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: AppTheme.borderColor, width: 0.5),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.calendar_today,
+                    color: AppTheme.textMuted, size: 16),
+                const SizedBox(width: 10),
+                Text(Formatters.date(date),
+                    style: const TextStyle(
+                        color: AppTheme.textPrimary, fontSize: 15)),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _CostPreview extends StatelessWidget {
+  final double totalCost;
+  const _CostPreview({required this.totalCost});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppTheme.bgCard,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppTheme.borderColor, width: 0.5),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          const Text('本次播种总成本',
+              style: TextStyle(color: AppTheme.textSecondary, fontSize: 14)),
+          Text(
+            '¥ ${Formatters.largeNumber(totalCost)}',
+            style: const TextStyle(
+                color: AppTheme.accentGold,
+                fontSize: 18,
+                fontWeight: FontWeight.w700),
+          ),
+        ],
+      ),
+    );
+  }
+}

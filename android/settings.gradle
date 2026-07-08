@@ -1,0 +1,44 @@
+pluginManagement {
+    def properties = new Properties()
+    file("local.properties").withInputStream { properties.load(it) }
+    def flutterSdkPath = properties.getProperty("flutter.sdk")
+    assert flutterSdkPath != null : "flutter.sdk not set in local.properties"
+
+    resolutionStrategy {
+        eachPlugin {
+            if (requested.id.id == "dev.flutter.flutter-plugin-loader" ||
+                    requested.id.id == "dev.flutter.flutter-gradle-plugin") {
+                useModule("dev.flutter.plugin:gradle:${requested.version}")
+            }
+        }
+    }
+
+    repositories {
+        maven {
+            url = uri("flutter-gradle-plugin-repo")
+        }
+        maven {
+            url = uri("https://maven.aliyun.com/repository/google")
+        }
+        maven {
+            url = uri("https://maven.aliyun.com/repository/central")
+        }
+        maven {
+            url = uri("https://maven.aliyun.com/repository/gradle-plugin")
+        }
+        maven {
+            url = uri("https://maven.aliyun.com/repository/public")
+        }
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+
+plugins {
+    id "dev.flutter.flutter-plugin-loader" version "1.0.0"
+    id "com.android.application" version "9.0.1" apply false
+    id "org.jetbrains.kotlin.android" version "2.3.20" apply false
+}
+
+include ":app"
