@@ -562,34 +562,36 @@ class _MarketSelector extends StatelessWidget {
         const Text('市场',
             style: TextStyle(color: AppTheme.textSecondary, fontSize: 13)),
         const SizedBox(height: 8),
-        Row(
-          children: ['SH', 'SZ'].map((m) {
-            final selected = market == m;
-            return Padding(
-              padding: const EdgeInsets.only(right: 12),
-              child: GestureDetector(
-                onTap: () => onChanged(m),
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: selected
-                        ? AppTheme.accent.withValues(alpha: 0.15)
-                        : AppTheme.bgCardLight,
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(
-                        color:
-                            selected ? AppTheme.accent : AppTheme.borderColor),
-                  ),
-                  child: Text(
-                    m == 'SH' ? '上交所(SH)' : '深交所(SZ)',
-                    style: TextStyle(
+        Wrap(
+          spacing: 10,
+          children: const {
+            'SH': '上交所(SH)',
+            'SZ': '深交所(SZ)',
+            'BJ': '北交所(BJ)',
+          }.entries.map((entry) {
+            final selected = market == entry.key;
+            return GestureDetector(
+              onTap: () => onChanged(entry.key),
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                decoration: BoxDecoration(
+                  color: selected
+                      ? AppTheme.accent.withValues(alpha: 0.15)
+                      : AppTheme.bgCardLight,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
                       color:
-                          selected ? AppTheme.accent : AppTheme.textSecondary,
-                      fontSize: 13,
-                      fontWeight:
-                          selected ? FontWeight.w600 : FontWeight.normal,
-                    ),
+                          selected ? AppTheme.accent : AppTheme.borderColor),
+                ),
+                child: Text(
+                  entry.value,
+                  style: TextStyle(
+                    color:
+                        selected ? AppTheme.accent : AppTheme.textSecondary,
+                    fontSize: 13,
+                    fontWeight:
+                        selected ? FontWeight.w600 : FontWeight.normal,
                   ),
                 ),
               ),

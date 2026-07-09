@@ -2,6 +2,7 @@ class Stock {
   final String code;
   final String name;
   final String market; // SH / SZ
+  final bool isFund;   // true = ETF/LOF/基金，false = 普通股票
   double price;
   double change;
   double changePercent;
@@ -21,6 +22,7 @@ class Stock {
     required this.code,
     required this.name,
     required this.market,
+    this.isFund = false,
     this.price = 0.0,
     this.change = 0.0,
     this.changePercent = 0.0,
@@ -46,6 +48,7 @@ class Stock {
       'code': code,
       'name': name,
       'market': market,
+      'is_fund': isFund ? 1 : 0,
       'price': price,
       'change': change,
       'change_percent': changePercent,
@@ -68,6 +71,7 @@ class Stock {
       code: map['code'] ?? '',
       name: map['name'] ?? '',
       market: map['market'] ?? 'SH',
+      isFund: (map['is_fund'] ?? 0) == 1,
       price: (map['price'] ?? 0.0).toDouble(),
       change: (map['change'] ?? 0.0).toDouble(),
       changePercent: (map['change_percent'] ?? 0.0).toDouble(),
@@ -86,6 +90,27 @@ class Stock {
           : DateTime.now(),
     );
   }
+
+  Stock copyWith({String? name}) => Stock(
+        code: code,
+        name: name ?? this.name,
+        market: market,
+        isFund: isFund,
+        price: price,
+        change: change,
+        changePercent: changePercent,
+        volume: volume,
+        turnover: turnover,
+        high: high,
+        low: low,
+        open: open,
+        preClose: preClose,
+        pe: pe,
+        pb: pb,
+        marketCap: marketCap,
+        turnoverRate: turnoverRate,
+        updatedAt: updatedAt,
+      );
 }
 
 /// 市场指数

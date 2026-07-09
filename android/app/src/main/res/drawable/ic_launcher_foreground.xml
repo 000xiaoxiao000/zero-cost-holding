@@ -5,92 +5,134 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
 
-    <!-- ── Base plate (rounded rect, translucent blue-white border) ── -->
-    <path
-        android:pathData="M28,26 h52 a8,8 0 0 1 8,8 v40 a8,8 0 0 1 -8,8 h-52 a8,8 0 0 1 -8,-8 v-40 a8,8 0 0 1 8,-8 z"
-        android:fillColor="#14FFFFFF"
-        android:strokeColor="#33FFFFFF"
-        android:strokeWidth="0.8"/>
+    <!--
+        Design: "SeedChart"
+        • Three bullish candlestick bars rising left→right
+        • A single sprouting seedling growing from the tallest candle
+        • Minimalist layout, generous whitespace, 3-color palette:
+            Teal:  #00D4A0  (rising candles, stem, leaves)
+            Gold:  #F5C518  (candle body highlight, seed)
+            White: #FFFFFF  (wick lines, subtle glow)
+    -->
 
-    <!-- ── Ground / baseline ── -->
+    <!-- ═══════════════════════════════════════════
+         CANDLE 1 — left, short bullish
+    ════════════════════════════════════════════ -->
+    <!-- wick -->
     <path
-        android:pathData="M26,72 h56"
-        android:strokeColor="#FFD4A017"
-        android:strokeWidth="2.2"
+        android:pathData="M32,68 L32,57"
+        android:strokeColor="#80FFFFFF"
+        android:strokeWidth="2"
         android:strokeLineCap="round"
         android:fillColor="@android:color/transparent"/>
-
-    <!-- ── Stem: vertical line growing from ground up ── -->
-    <path
-        android:pathData="M54,72 L54,50"
-        android:strokeColor="#FF00C896"
-        android:strokeWidth="3"
-        android:strokeLineCap="round"
-        android:fillColor="@android:color/transparent"/>
-
-    <!-- ── Left leaf ── -->
-    <path
-        android:pathData="M54,62 C54,62 42,58 40,50 C40,50 50,48 54,56 Z"
-        android:fillColor="#FF00C896"
-        android:fillAlpha="0.90"/>
-
-    <!-- ── Right leaf ── -->
-    <path
-        android:pathData="M54,56 C54,56 66,52 68,44 C68,44 58,42 54,50 Z"
-        android:fillColor="#FF39E0B4"
-        android:fillAlpha="0.90"/>
-
-    <!-- ── Seed (golden ellipse at ground level) ── -->
-    <path
-        android:pathData="M54,72 m-7,0 a7,4.5 0 1 0 14,0 a7,4.5 0 1 0 -14,0">
+    <!-- body -->
+    <path android:pathData="M28,76 h8 a2,2 0 0 0 2,-2 v-14 a2,2 0 0 0 -2,-2 h-8 a2,2 0 0 0 -2,2 v14 a2,2 0 0 0 2,2 z">
         <aapt:attr xmlns:aapt="http://schemas.android.com/aapt" name="android:fillColor">
             <gradient
                 android:type="linear"
-                android:startX="47"
-                android:startY="68"
-                android:endX="61"
+                android:startX="26"
+                android:startY="58"
+                android:endX="38"
                 android:endY="76">
-                <item android:offset="0"   android:color="#FFFDE68A"/>
-                <item android:offset="0.5" android:color="#FFD4A017"/>
-                <item android:offset="1"   android:color="#FFA87010"/>
+                <item android:offset="0"   android:color="#FF00D4A0"/>
+                <item android:offset="1"   android:color="#FF009E78"/>
             </gradient>
         </aapt:attr>
     </path>
 
-    <!-- ── Rising chart line (上升折线, 3 nodes) ── -->
+    <!-- ═══════════════════════════════════════════
+         CANDLE 2 — center, medium bullish
+    ════════════════════════════════════════════ -->
+    <!-- wick -->
     <path
-        android:pathData="M34,64 L44,56 L54,58 L68,44 L78,36"
-        android:strokeColor="#FF00C896"
-        android:strokeWidth="3"
+        android:pathData="M54,76 L54,44"
+        android:strokeColor="#80FFFFFF"
+        android:strokeWidth="2"
         android:strokeLineCap="round"
-        android:strokeLineJoin="round"
+        android:fillColor="@android:color/transparent"/>
+    <!-- body -->
+    <path android:pathData="M50,76 h8 a2,2 0 0 0 2,-2 v-24 a2,2 0 0 0 -2,-2 h-8 a2,2 0 0 0 -2,2 v24 a2,2 0 0 0 2,2 z">
+        <aapt:attr xmlns:aapt="http://schemas.android.com/aapt" name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="48"
+                android:startY="48"
+                android:endX="60"
+                android:endY="76">
+                <item android:offset="0"   android:color="#FF00D4A0"/>
+                <item android:offset="1"   android:color="#FF009E78"/>
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- ═══════════════════════════════════════════
+         CANDLE 3 — right, tall bullish (gold accent)
+    ════════════════════════════════════════════ -->
+    <!-- wick -->
+    <path
+        android:pathData="M76,76 L76,36"
+        android:strokeColor="#80FFFFFF"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:fillColor="@android:color/transparent"/>
+    <!-- body -->
+    <path android:pathData="M72,76 h8 a2,2 0 0 0 2,-2 v-30 a2,2 0 0 0 -2,-2 h-8 a2,2 0 0 0 -2,2 v30 a2,2 0 0 0 2,2 z">
+        <aapt:attr xmlns:aapt="http://schemas.android.com/aapt" name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="70"
+                android:startY="42"
+                android:endX="82"
+                android:endY="76">
+                <item android:offset="0"   android:color="#FFF5C518"/>
+                <item android:offset="1"   android:color="#FFD4A010"/>
+            </gradient>
+        </aapt:attr>
+    </path>
+    <!-- inner shine on tall candle -->
+    <path
+        android:pathData="M74,46 L74,66"
+        android:strokeColor="#40FFFFFF"
+        android:strokeWidth="1.5"
+        android:strokeLineCap="round"
         android:fillColor="@android:color/transparent"/>
 
-    <!-- chart line highlight (softer glow layer) -->
+    <!-- ═══════════════════════════════════════════
+         SEEDLING on top of candle 3
+         Stem grows upward from top of candle wick
+    ════════════════════════════════════════════ -->
+    <!-- stem -->
     <path
-        android:pathData="M34,64 L44,56 L54,58 L68,44 L78,36"
-        android:strokeColor="#9939E0B4"
-        android:strokeWidth="5.5"
-        android:strokeLineCap="round"
-        android:strokeLineJoin="round"
-        android:fillColor="@android:color/transparent"/>
-
-    <!-- ── Chart nodes ── -->
-    <path android:pathData="M34,64 m-3,0 a3,3 0 1 0 6,0 a3,3 0 1 0 -6,0" android:fillColor="#FF00C896"/>
-    <path android:pathData="M44,56 m-3,0 a3,3 0 1 0 6,0 a3,3 0 1 0 -6,0" android:fillColor="#FF00C896"/>
-    <path android:pathData="M54,58 m-3,0 a3,3 0 1 0 6,0 a3,3 0 1 0 -6,0" android:fillColor="#FF00C896"/>
-    <path android:pathData="M68,44 m-3,0 a3,3 0 1 0 6,0 a3,3 0 1 0 -6,0" android:fillColor="#FFD4A017"/>
-    <!-- top node: gold star-like accent -->
-    <path android:pathData="M78,36 m-3.5,0 a3.5,3.5 0 1 0 7,0 a3.5,3.5 0 1 0 -7,0" android:fillColor="#FFFDE68A"/>
-    <path android:pathData="M78,36 m-1.8,0 a1.8,1.8 0 1 0 3.6,0 a1.8,1.8 0 1 0 -3.6,0" android:fillColor="#FFD4A017"/>
-
-    <!-- ── Up-arrow at top-right ── -->
-    <path
-        android:pathData="M78,36 L74,40 M78,36 L82,40 M78,36 L78,43"
-        android:strokeColor="#FFD4A017"
+        android:pathData="M76,36 L76,24"
+        android:strokeColor="#FF00D4A0"
         android:strokeWidth="2.5"
         android:strokeLineCap="round"
-        android:strokeLineJoin="round"
+        android:fillColor="@android:color/transparent"/>
+
+    <!-- left leaf -->
+    <path
+        android:pathData="M76,30 C76,30 66,28 64,22 C64,22 72,20 76,26 Z"
+        android:fillColor="#FF00D4A0"
+        android:fillAlpha="0.95"/>
+
+    <!-- right leaf (lighter teal) -->
+    <path
+        android:pathData="M76,26 C76,26 86,24 88,18 C88,18 80,16 76,22 Z"
+        android:fillColor="#FF39E8C0"
+        android:fillAlpha="0.95"/>
+
+    <!-- tiny seed dot at stem base (gold) -->
+    <path android:pathData="M76,36 m-3,1 a3,2 0 1 0 6,0 a3,2 0 1 0 -6,0"
+        android:fillColor="#FFF5C518"/>
+
+    <!-- ═══════════════════════════════════════════
+         BASELINE / GROUND LINE
+    ════════════════════════════════════════════ -->
+    <path
+        android:pathData="M20,78 L88,78"
+        android:strokeColor="#40FFFFFF"
+        android:strokeWidth="1"
+        android:strokeLineCap="round"
         android:fillColor="@android:color/transparent"/>
 
 </vector>

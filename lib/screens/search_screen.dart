@@ -181,18 +181,21 @@ class _MarketBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isSH = market == 'SH';
+    final Color color = market == 'SH'
+        ? AppTheme.accentGold
+        : market == 'BJ'
+            ? AppTheme.accent
+            : AppTheme.primaryGreen;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
       decoration: BoxDecoration(
-        color: (isSH ? AppTheme.accentGold : AppTheme.primaryGreen)
-            .withValues(alpha: 0.12),
+        color: color.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(3),
       ),
       child: Text(
         market,
         style: TextStyle(
-          color: isSH ? AppTheme.accentGold : AppTheme.primaryGreen,
+          color: color,
           fontSize: 10,
           fontWeight: FontWeight.w600,
         ),

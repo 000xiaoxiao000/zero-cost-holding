@@ -34,9 +34,10 @@ class _SeedScreeningScreenState extends State<SeedScreeningScreen> {
   double? _autoDivYield;
   int?    _autoDivYears;
   String? _autoDivStability, _autoTrend, _autoTrendTip;
+  bool    _isFund = false;
 
   bool   _loading = false;
-  String _status  = '输入A股代码或名称后，点击「自动拉取并排雷」，系统将自动填充行情、估值、财务、分红数据。';
+  String _status  = '输入A股代码/基金代码或名称后，点击「自动拉取并排雷」，系统将自动填充行情、估值、财务、分红数据。';
 
   @override
   void initState() {
@@ -82,10 +83,17 @@ class _SeedScreeningScreenState extends State<SeedScreeningScreen> {
         final m = hits.first;
         input = m.code;
         _codeController.text = m.code; _nameController.text = m.name; _market = m.market;
+        _isFund = m.isFund;
         setState(() => _status = '已匹配「${m.name}」(${m.code})，正在拉取数据...');
+      } else {
+        // 直接输入代码时，根据代码前缀判断是否为基金，并推断市场
+        _isFund = StockApiService().isFundCode(input);
+        if (!_isFund) {
+          _market = StockApiService().inferMarket(input);
+        }
       }
       final code = input;
-      setState(() => _status = '正在拉取行情、K线、财务、分红数据...');
+      setState(() => _status = '正在拉取行情、K线、${_isFund ? "分红收益" : "财务、分红"}数据...');
       final fetched = await Future.wait([
         svc.fetchStockQuote(code, _market),
         svc.fetchKlineDaily(code, _market, limit: 120),
@@ -99,28 +107,40 @@ class _SeedScreeningScreenState extends State<SeedScreeningScreen> {
         setState(() { _loading = false; _status = '行情未取到，请检查代码和市场是否正确。'; });
         return;
       }
-      setState(() => _status = '正在计算PE/PB历史百分位...');
-      final pct = await svc.fetchValuationPercentile(code, _market);
+      final isFundDetected = risk.isFund || stock.isFund;
+      // 基金不拉 PE/PB 百分位，直接跳过该步骤节省时间
+      final pct = isFundDetected
+          ? (pePercentile: null as int?, pbPercentile: null as int?)
+          : await svc.fetchValuationPercentile(code, _market);
       if (!mounted) return;
       final trend = _detectTrend(klines);
       final price = stock.price > 0 ? stock.price : 0.0;
       final nameU = stock.name.toUpperCase();
       final autoSt = nameU.contains('ST');
       final autoDel = stock.name.contains('退') || nameU.contains('*ST') || nameU.startsWith('PT');
-      final pe = pct.pePercentile ?? _fbPe(stock.pe);
-      final pb = pct.pbPercentile ?? _fbPb(stock.pb);
+      // 基金无 PE/PB，不做估算回退
+      final pe = isFundDetected ? null : (pct.pePercentile ?? _fbPe(stock.pe));
+      final pb = isFundDetected ? null : (pct.pbPercentile ?? _fbPb(stock.pb));
       final notes = <String>[];
-      notes.add(pct.pePercentile == null ? 'PE百分位为估算值' : 'PE百分位取自历史数据');
-      notes.add(pct.pbPercentile == null ? 'PB百分位为估算值' : 'PB百分位取自历史数据');
+      if (!isFundDetected) {
+        notes.add(pct.pePercentile == null ? 'PE百分位为估算值' : 'PE百分位取自历史数据');
+        notes.add(pct.pbPercentile == null ? 'PB百分位为估算值' : 'PB百分位取自历史数据');
+      } else {
+        notes.add('基金无PE/PB历史百分位，估值模块已隐藏');
+      }
       if (risk.sourceNotes.isNotEmpty) notes.addAll(risk.sourceNotes);
-      else notes.add('财务/质押/分红数据未取到，相关项仍需人工核验');
+      else notes.add('${isFundDetected ? "基金分红" : "财务/质押/分红"}数据未取到，相关项仍需人工核验');
       if (autoSt)  notes.add('检测到ST状态，已自动标记');
       if (autoDel) notes.add('检测到退市风险，已自动标记');
       setState(() {
+        // 名称优先用行情接口返回值，但若为空（如新浪备用接口不返回名称），
+        // 保留搜索结果或用户已填写的名称，避免覆盖为空
         if (stock.name.isNotEmpty) _nameController.text = stock.name;
+        _isFund = isFundDetected;
         _autoPrice = price > 0 ? price : null;
         _autoPePct = pe; _autoPbPct = pb;
-        _autoPeEst = pct.pePercentile == null; _autoPbEst = pct.pbPercentile == null;
+        _autoPeEst = !isFundDetected && pct.pePercentile == null;
+        _autoPbEst = !isFundDetected && pct.pbPercentile == null;
         _autoPledge = risk.pledgeRatio; _autoDebt = risk.debtRatio;
         _autoGoodwill = risk.goodwillRatio; _autoCashflow = risk.cashflowMargin;
         _autoDivYield = risk.dividendYield; _autoDivYears = risk.dividendYears;
@@ -169,36 +189,44 @@ class _SeedScreeningScreenState extends State<SeedScreeningScreen> {
     if (_delistRisk)         hard.add('存在退市风险，禁止播种');
     if (_violationGuarantee) hard.add('存在违规担保风险，禁止播种');
     if (_financialFraudRisk) hard.add('存在财务造假风险，禁止播种');
-    if (_autoCashflow!=null&&_autoCashflow!<0) hard.add('经营现金流为负，禁止播种');
-    if (_autoPledge!=null&&_autoPledge!>=50)   hard.add('大股东质押率≥50%，禁止播种');
-    if (_autoPledge!=null) {
-      if (_autoPledge!>=30) { s-=18; warn.add('大股东质押率偏高（${_autoPledge!.toStringAsFixed(1)}%），需降低仓位上限'); }
-      else if (_autoPledge!<10) { s+=5; str.add('大股东质押率极低（${_autoPledge!.toStringAsFixed(1)}%）'); }
+
+    // 股票特有指标，基金跳过
+    if (!_isFund) {
+      if (_autoCashflow!=null&&_autoCashflow!<0) hard.add('经营现金流为负，禁止播种');
+      if (_autoPledge!=null&&_autoPledge!>=50)   hard.add('大股东质押率≥50%，禁止播种');
+      if (_autoPledge!=null) {
+        if (_autoPledge!>=30) { s-=18; warn.add('大股东质押率偏高（${_autoPledge!.toStringAsFixed(1)}%），需降低仓位上限'); }
+        else if (_autoPledge!<10) { s+=5; str.add('大股东质押率极低（${_autoPledge!.toStringAsFixed(1)}%）'); }
+      }
+      if (_autoDebt!=null) {
+        if (_autoDebt!>=70) { s-=18; warn.add('资产负债率偏高（${_autoDebt!.toStringAsFixed(1)}%）'); }
+        else if (_autoDebt!<=45) { s+=5; str.add('资产负债率健康（${_autoDebt!.toStringAsFixed(1)}%）'); }
+      }
+      if (_autoGoodwill!=null) {
+        if (_autoGoodwill!>=30) { s-=15; warn.add('商誉/净资产偏高（${_autoGoodwill!.toStringAsFixed(1)}%），防减值风险'); }
+        else if (_autoGoodwill!<5) { s+=3; str.add('商誉占比极低（${_autoGoodwill!.toStringAsFixed(1)}%）'); }
+      }
+      if (_autoCashflow!=null) {
+        if (_autoCashflow!<5) { s-=15; warn.add('经营现金流/净利润偏低（${_autoCashflow!.toStringAsFixed(1)}%），盈利质量存疑'); }
+        else { s+=8; str.add('经营现金流质量良好（${_autoCashflow!.toStringAsFixed(1)}%）'); }
+      }
+      if (_autoPePct!=null) {
+        if (_autoPePct!<=30) { s+=10; str.add('PE处于历史低位（${_autoPePct}分位${_autoPeEst?"，估算":""}）'); }
+        else if (_autoPePct!>=80) { s-=20; warn.add('PE处于历史高位（${_autoPePct}分位${_autoPeEst?"，估算":""}），播种性价比下降'); }
+      }
+      if (_autoPbPct!=null) {
+        if (_autoPbPct!<=30) { s+=8; str.add('PB处于历史低位（${_autoPbPct}分位${_autoPbEst?"，估算":""}）'); }
+        else if (_autoPbPct!>=80) { s-=15; warn.add('PB处于历史高位（${_autoPbPct}分位${_autoPbEst?"，估算":""}）'); }
+      }
+    } else {
+      // 基金专项：用 K 线趋势替代估值加分/扣分主要来源
+      str.add('基金（ETF/LOF）无质押/负债/商誉风险，财务安全项不适用');
     }
-    if (_autoDebt!=null) {
-      if (_autoDebt!>=70) { s-=18; warn.add('资产负债率偏高（${_autoDebt!.toStringAsFixed(1)}%）'); }
-      else if (_autoDebt!<=45) { s+=5; str.add('资产负债率健康（${_autoDebt!.toStringAsFixed(1)}%）'); }
-    }
-    if (_autoGoodwill!=null) {
-      if (_autoGoodwill!>=30) { s-=15; warn.add('商誉/净资产偏高（${_autoGoodwill!.toStringAsFixed(1)}%），防减值风险'); }
-      else if (_autoGoodwill!<5) { s+=3; str.add('商誉占比极低（${_autoGoodwill!.toStringAsFixed(1)}%）'); }
-    }
-    if (_autoCashflow!=null) {
-      if (_autoCashflow!<5) { s-=15; warn.add('经营现金流/净利润偏低（${_autoCashflow!.toStringAsFixed(1)}%），盈利质量存疑'); }
-      else { s+=8; str.add('经营现金流质量良好（${_autoCashflow!.toStringAsFixed(1)}%）'); }
-    }
-    if (_autoPePct!=null) {
-      if (_autoPePct!<=30) { s+=10; str.add('PE处于历史低位（${_autoPePct}分位${_autoPeEst?"，估算":""}）'); }
-      else if (_autoPePct!>=80) { s-=20; warn.add('PE处于历史高位（${_autoPePct}分位${_autoPeEst?"，估算":""}），播种性价比下降'); }
-    }
-    if (_autoPbPct!=null) {
-      if (_autoPbPct!<=30) { s+=8; str.add('PB处于历史低位（${_autoPbPct}分位${_autoPbEst?"，估算":""}）'); }
-      else if (_autoPbPct!>=80) { s-=15; warn.add('PB处于历史高位（${_autoPbPct}分位${_autoPbEst?"，估算":""}）'); }
-    }
+
     if (_autoDivYield!=null&&_autoDivYield!>=3&&(_autoDivYears??0)>=5) {
-      s+=15; str.add('股息率高（${_autoDivYield!.toStringAsFixed(2)}%）且连续分红${_autoDivYears}年，灌溉能力强');
+      s+=15; str.add('${_isFund?"基金收益率":"股息率"}高（${_autoDivYield!.toStringAsFixed(2)}%）且连续分红${_autoDivYears}${_isFund?"次":"年"}，灌溉能力强');
     } else if (_autoDivYield==null||_autoDivYield!<1) {
-      s-=10; warn.add('无分红或股息率极低，灌溉能力不足');
+      s-=10; warn.add('无分红或${_isFund?"收益率":"股息率"}极低，灌溉能力不足');
     }
     if (_autoDivStability=='unstable') { s-=12; warn.add('历史分红不稳定'); }
     else if (_autoDivStability=='stable') { s+=8; str.add('历史分红稳定'); }
@@ -237,6 +265,7 @@ class _SeedScreeningScreenState extends State<SeedScreeningScreen> {
             nameController: _nameController,
             market: _market,
             isLoading: _loading,
+            isFund: _isFund,
             status: _status,
             onChanged: () => setState(() {}),
             onMarketChanged: (v) => setState(() => _market = v),
@@ -246,27 +275,34 @@ class _SeedScreeningScreenState extends State<SeedScreeningScreen> {
           // ② 综合评分结果
           _ResultCard(result: result, name: _nameController.text),
           const SizedBox(height: 16),
-          // ③ 自动拉取：行情 + 估值百分位
+          // ③ 自动拉取区块标题
           _SectionLabel(label: '自动拉取数据', icon: Icons.cloud_done_outlined, color: AppTheme.accent),
           const SizedBox(height: 8),
-          _AutoDataCard(
-            price: _autoPrice,
-            pePct: _autoPePct, pbPct: _autoPbPct,
-            peEst: _autoPeEst, pbEst: _autoPbEst,
-            trend: _autoTrend, trendTip: _autoTrendTip,
-          ),
+          // 基金显示行情+K线趋势，隐藏 PE/PB 百分位（基金无此指标）
+          if (_isFund)
+            _FundDataCard(price: _autoPrice, trend: _autoTrend, trendTip: _autoTrendTip)
+          else
+            _AutoDataCard(
+              price: _autoPrice,
+              pePct: _autoPePct, pbPct: _autoPbPct,
+              peEst: _autoPeEst, pbEst: _autoPbEst,
+              trend: _autoTrend, trendTip: _autoTrendTip,
+            ),
           const SizedBox(height: 8),
-          // ④ 自动拉取：财务安全
-          _FinancialAutoCard(
-            pledge: _autoPledge, debt: _autoDebt,
-            goodwill: _autoGoodwill, cashflow: _autoCashflow,
-          ),
-          const SizedBox(height: 8),
-          // ⑤ 自动拉取：分红灌溉
+          // 财务安全：仅股票显示，基金跳过
+          if (!_isFund) ...[
+            _FinancialAutoCard(
+              pledge: _autoPledge, debt: _autoDebt,
+              goodwill: _autoGoodwill, cashflow: _autoCashflow,
+            ),
+            const SizedBox(height: 8),
+          ],
+          // ⑤ 自动拉取：分红灌溉（基金显示收益率，标签文案有区别）
           _DividendAutoCard(
             yield_: _autoDivYield,
             years: _autoDivYears,
             stability: _autoDivStability,
+            isFund: _isFund,
           ),
           const SizedBox(height: 16),
           // ⑥ 用户录入：硬性一票否决
@@ -402,6 +438,7 @@ class _AutoFetchCard extends StatefulWidget {
   final TextEditingController nameController;
   final String market;
   final bool isLoading;
+  final bool isFund;
   final String status;
   final VoidCallback onChanged;
   final ValueChanged<String> onMarketChanged;
@@ -410,6 +447,7 @@ class _AutoFetchCard extends StatefulWidget {
     required this.codeController, required this.nameController,
     required this.market, required this.isLoading, required this.status,
     required this.onChanged, required this.onMarketChanged, required this.onFetch,
+    this.isFund = false,
   });
   @override
   State<_AutoFetchCard> createState() => _AutoFetchCardState();
@@ -502,10 +540,24 @@ class _AutoFetchCardState extends State<_AutoFetchCard> {
           Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             _FieldLabel('市场'),
             const SizedBox(height: 6),
-            _TogglePair(
-              labels: const ['沪市', '深市'], values: const ['SH', 'SZ'],
-              selected: widget.market, onChanged: widget.onMarketChanged,
-            ),
+            widget.isFund
+                ? Container(
+                    alignment: Alignment.center,
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                    decoration: BoxDecoration(
+                      color: AppTheme.primaryGreen.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: AppTheme.primaryGreen.withValues(alpha: 0.5)),
+                    ),
+                    child: Text('基金', style: TextStyle(
+                      color: AppTheme.primaryGreen, fontSize: 13, fontWeight: FontWeight.w700,
+                    )),
+                  )
+                : _TogglePair(
+                    labels: const ['沪市', '深市', '京市'],
+                    values: const ['SH', 'SZ', 'BJ'],
+                    selected: widget.market, onChanged: widget.onMarketChanged,
+                  ),
           ])),
         ]),
         const SizedBox(height: 14),
@@ -568,6 +620,14 @@ class _SuggDrop extends StatelessWidget {
                     decoration: BoxDecoration(color: AppTheme.accent.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(4)),
                     child: Text(s.market, style: TextStyle(color: AppTheme.accent, fontSize: 10, fontWeight: FontWeight.w700)),
                   ),
+                  if (s.isFund) ...[
+                    const SizedBox(width: 4),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                      decoration: BoxDecoration(color: AppTheme.primaryGreen.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(4)),
+                      child: Text('基金', style: TextStyle(color: AppTheme.primaryGreen, fontSize: 10, fontWeight: FontWeight.w700)),
+                    ),
+                  ],
                 ]),
               ),
             );
@@ -722,7 +782,8 @@ class _DividendAutoCard extends StatelessWidget {
   final double? yield_;
   final int? years;
   final String? stability;
-  const _DividendAutoCard({this.yield_, this.years, this.stability});
+  final bool isFund;
+  const _DividendAutoCard({this.yield_, this.years, this.stability, this.isFund = false});
   String get _stabilityLabel {
     if (stability == 'stable')   return '稳定';
     if (stability == 'unstable') return '不稳定';
@@ -736,17 +797,23 @@ class _DividendAutoCard extends StatelessWidget {
   }
   @override
   Widget build(BuildContext context) {
+    final yieldLabel = isFund ? '近12月收益率' : '股息率';
+    final yearsLabel = isFund ? '历史分红次数' : '连续分红年数';
+    final yearsUnit  = isFund ? '次' : '年';
+    final noteText   = isFund
+        ? '收益率 ≥3% 且有稳定分红记录为播种参考标准，ETF/LOF 分红为灌溉核心来源。'
+        : '股息率 ≥3% 且连续分红 ≥5年为播种标准，分红是零成本策略的核心灌溉来源。';
     return _Card(title: '分红灌溉（自动拉取）', children: [
       Row(children: [
         Expanded(child: _ReadItem(
-          label: '股息率',
+          label: yieldLabel,
           value: yield_ != null ? '${yield_!.toStringAsFixed(2)}%' : '—',
           good: yield_ != null && yield_! >= 3,
           warn: yield_ != null && yield_! < 1 && yield_! > 0,
         )),
         Expanded(child: _ReadItem(
-          label: '连续分红年数',
-          value: years != null ? '$years 年' : '—',
+          label: yearsLabel,
+          value: years != null ? '$years $yearsUnit' : '—',
           good: years != null && years! >= 5,
           warn: years != null && years! < 2,
         )),
@@ -757,7 +824,36 @@ class _DividendAutoCard extends StatelessWidget {
         )),
       ]),
       const SizedBox(height: 10),
-      const _AutoNote(text: '股息率 ≥3% 且连续分红 ≥5年为播种标准，分红是零成本策略的核心灌溉来源。'),
+      _AutoNote(text: noteText),
+    ]);
+  }
+}
+
+// ── 基金专用数据展示：行情 + K线趋势（无PE/PB） ───────────────────────────────
+class _FundDataCard extends StatelessWidget {
+  final double? price;
+  final String? trend, trendTip;
+  const _FundDataCard({this.price, this.trend, this.trendTip});
+  @override
+  Widget build(BuildContext context) {
+    return _Card(title: '行情 & K线趋势（基金）', children: [
+      Row(children: [
+        Expanded(child: _ReadItem(
+          label: '当前价',
+          value: price != null ? '${price!.toStringAsFixed(4)} 元' : '—',
+        )),
+        Expanded(child: _ReadItem(
+          label: 'PE/PB百分位',
+          value: 'N/A',
+          badge: '基金不适用',
+        )),
+      ]),
+      if (trendTip != null) ...[
+        const SizedBox(height: 10),
+        _TrendRow(trend: trend ?? 'neutral', tip: trendTip!),
+      ],
+      const SizedBox(height: 10),
+      const _AutoNote(text: 'ETF/LOF 无 PE/PB 历史估值，可参考折溢价率和跟踪误差评估买入时机。'),
     ]);
   }
 }

@@ -5,60 +5,64 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
 
-    <!-- Ground baseline -->
+    <!-- Candle 1 — left, short -->
     <path
-        android:pathData="M26,72 h56"
+        android:pathData="M32,68 L32,57"
         android:strokeColor="#FFFFFFFF"
-        android:strokeWidth="2.2"
+        android:strokeWidth="2"
         android:strokeLineCap="round"
         android:fillColor="@android:color/transparent"/>
+    <path android:pathData="M28,76 h8 a2,2 0 0 0 2,-2 v-14 a2,2 0 0 0 -2,-2 h-8 a2,2 0 0 0 -2,2 v14 a2,2 0 0 0 2,2 z"
+        android:fillColor="#CCFFFFFF"/>
 
-    <!-- Stem -->
+    <!-- Candle 2 — center, medium -->
     <path
-        android:pathData="M54,72 L54,50"
+        android:pathData="M54,76 L54,44"
         android:strokeColor="#FFFFFFFF"
-        android:strokeWidth="3"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:fillColor="@android:color/transparent"/>
+    <path android:pathData="M50,76 h8 a2,2 0 0 0 2,-2 v-24 a2,2 0 0 0 -2,-2 h-8 a2,2 0 0 0 -2,2 v24 a2,2 0 0 0 2,2 z"
+        android:fillColor="#DDFFFFFF"/>
+
+    <!-- Candle 3 — right, tall -->
+    <path
+        android:pathData="M76,76 L76,36"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:fillColor="@android:color/transparent"/>
+    <path android:pathData="M72,76 h8 a2,2 0 0 0 2,-2 v-30 a2,2 0 0 0 -2,-2 h-8 a2,2 0 0 0 -2,2 v30 a2,2 0 0 0 2,2 z"
+        android:fillColor="#FFFFFFFF"/>
+
+    <!-- Seedling stem on candle 3 -->
+    <path
+        android:pathData="M76,36 L76,24"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="2.5"
         android:strokeLineCap="round"
         android:fillColor="@android:color/transparent"/>
 
     <!-- Left leaf -->
     <path
-        android:pathData="M54,62 C54,62 42,58 40,50 C40,50 50,48 54,56 Z"
-        android:fillColor="#CCFFFFFF"/>
+        android:pathData="M76,30 C76,30 66,28 64,22 C64,22 72,20 76,26 Z"
+        android:fillColor="#BBFFFFFF"/>
 
     <!-- Right leaf -->
     <path
-        android:pathData="M54,56 C54,56 66,52 68,44 C68,44 58,42 54,50 Z"
+        android:pathData="M76,26 C76,26 86,24 88,18 C88,18 80,16 76,22 Z"
         android:fillColor="#FFFFFFFF"/>
 
-    <!-- Seed ellipse -->
-    <path
-        android:pathData="M54,72 m-7,0 a7,4.5 0 1 0 14,0 a7,4.5 0 1 0 -14,0"
+    <!-- Seed dot -->
+    <path android:pathData="M76,36 m-3,1 a3,2 0 1 0 6,0 a3,2 0 1 0 -6,0"
         android:fillColor="#FFFFFFFF"/>
 
-    <!-- Rising chart line -->
+    <!-- Baseline -->
     <path
-        android:pathData="M34,64 L44,56 L54,58 L68,44 L78,36"
-        android:strokeColor="#FFFFFFFF"
-        android:strokeWidth="3"
+        android:pathData="M20,78 L88,78"
+        android:strokeColor="#60FFFFFF"
+        android:strokeWidth="1"
         android:strokeLineCap="round"
-        android:strokeLineJoin="round"
-        android:fillColor="@android:color/transparent"/>
-
-    <!-- Chart nodes -->
-    <path android:pathData="M34,64 m-3,0 a3,3 0 1 0 6,0 a3,3 0 1 0 -6,0" android:fillColor="#FFFFFFFF"/>
-    <path android:pathData="M44,56 m-3,0 a3,3 0 1 0 6,0 a3,3 0 1 0 -6,0" android:fillColor="#FFFFFFFF"/>
-    <path android:pathData="M54,58 m-3,0 a3,3 0 1 0 6,0 a3,3 0 1 0 -6,0" android:fillColor="#FFFFFFFF"/>
-    <path android:pathData="M68,44 m-3,0 a3,3 0 1 0 6,0 a3,3 0 1 0 -6,0" android:fillColor="#FFFFFFFF"/>
-    <path android:pathData="M78,36 m-3.5,0 a3.5,3.5 0 1 0 7,0 a3.5,3.5 0 1 0 -7,0" android:fillColor="#FFFFFFFF"/>
-
-    <!-- Up-arrow -->
-    <path
-        android:pathData="M78,36 L74,40 M78,36 L82,40 M78,36 L78,43"
-        android:strokeColor="#FFFFFFFF"
-        android:strokeWidth="2.5"
-        android:strokeLineCap="round"
-        android:strokeLineJoin="round"
         android:fillColor="@android:color/transparent"/>
 
 </vector>
