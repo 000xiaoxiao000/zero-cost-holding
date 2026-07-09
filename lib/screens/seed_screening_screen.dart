@@ -1294,7 +1294,7 @@ class _NumField extends StatelessWidget {
       TextField(
         controller: controller,
         keyboardType: const TextInputType.numberWithOptions(decimal: true),
-        inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d{0,2}'))],
+        inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d{0,3}'))],
         onChanged: (_) => onChanged(),
         style: const TextStyle(color: AppTheme.textPrimary, fontSize: 14),
         decoration: InputDecoration(

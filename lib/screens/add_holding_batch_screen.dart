@@ -198,7 +198,7 @@ class _AddHoldingBatchScreenState
                           RegExp(r'^\d+\.?\d{0,4}'))
                     else
                       FilteringTextInputFormatter.allow(
-                          RegExp(r'^\d+\.?\d{0,2}'))
+                          RegExp(r'^\d+\.?\d{0,3}'))
                   ],
                   validator: (v) {
                     if (v == null || v.isEmpty) {
@@ -247,7 +247,7 @@ class _AddHoldingBatchScreenState
                   keyboardType:
                       const TextInputType.numberWithOptions(decimal: true),
                   inputFormatters: [
-                    FilteringTextInputFormatter.allow(RegExp(r'^\d+\.?\d{0,2}'))
+                    FilteringTextInputFormatter.allow(RegExp(r'^\d+\.?\d{0,3}'))
                   ],
                   validator: null,
                 ),

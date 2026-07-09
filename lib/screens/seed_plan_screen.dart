@@ -958,7 +958,7 @@ class _NumberField extends StatelessWidget {
             if (digitsOnly)
               FilteringTextInputFormatter.digitsOnly
             else
-              FilteringTextInputFormatter.allow(RegExp(r'^\d+\.?\d{0,2}')),
+              FilteringTextInputFormatter.allow(RegExp(r'^\d+\.?\d{0,3}')),
           ],
           onChanged: (_) => onChanged(),
           style: const TextStyle(color: AppTheme.textPrimary, fontSize: 14),

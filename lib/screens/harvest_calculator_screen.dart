@@ -432,6 +432,7 @@ class _ConfigCard extends StatelessWidget {
                   label: '剩余本金缺口',
                   suffix: '元',
                   controller: remainingCostController,
+                  decimals: 3,
                   onChanged: onChanged,
                 ),
               ),

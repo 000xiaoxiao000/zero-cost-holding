@@ -1056,7 +1056,7 @@ class _CashIncomeDialogState extends State<_CashIncomeDialog> {
             controller: _amountController,
             keyboardType: const TextInputType.numberWithOptions(decimal: true),
             inputFormatters: [
-              FilteringTextInputFormatter.allow(RegExp(r'^\d+\.?\d{0,2}')),
+              FilteringTextInputFormatter.allow(RegExp(r'^\d+\.?\d{0,3}')),
             ],
             decoration: InputDecoration(
               labelText: '累计现金分红/派发',
@@ -1166,7 +1166,7 @@ class _RecoverDialogState extends State<_RecoverDialog> {
               if (batch.isFund)
                 FilteringTextInputFormatter.allow(RegExp(r'^\d+\.?\d{0,4}'))
               else
-                FilteringTextInputFormatter.allow(RegExp(r'^\d+\.?\d{0,2}')),
+                FilteringTextInputFormatter.allow(RegExp(r'^\d+\.?\d{0,3}')),
             ],
             decoration: InputDecoration(
               labelText: batch.isFund ? '回收确认净值' : '回收参考价格',
