@@ -584,13 +584,13 @@ class StockApiService {
 
   // ── 自动排雷（股票） ──────────────────────────────────────────────────────
 
-  Future<AutoRiskData> fetchAutoRiskData(String code, String market) async {
+  Future<AutoRiskData> fetchAutoRiskData(String code, String market, {double? price}) async {
     if (_isFundCode(code)) return _fetchFundRiskData(code, market);
     final secuCode = '$code.${market == "SH" ? "SH" : "SZ"}';
     final notes = <String>[];
 
     final results = await Future.wait<dynamic>([
-      _sinaFinanceData(code, market),
+      _sinaFinanceData(code, market, price: price),
       _fetchFirstReport(
         reportNames: const ['RPT_PLEDGE_RATIO', 'RPTA_WEB_EQUITYPLEDGE', 'RPT_F10_EH_EQUITYPLEDGE'],
         filters: ['(SECURITY_CODE="$code")', '(SECUCODE="$secuCode")'],
@@ -657,16 +657,27 @@ class StockApiService {
 
   // ── 新浪F10财务 ───────────────────────────────────────────────────────────
 
-  Future<_SinaFinanceResult> _sinaFinanceData(String code, String market) async {
+  /// 新浪 F10 页面是 GBK 编码，Dart 无 GBK 解码器，中文全是乱码。
+  /// 策略：
+  ///   1. 分红页：靠 ASCII 日期统计连续分红年数；靠列位置提取「每10股派息」，
+  ///      结合当前股价自算股息率（数字均为 ASCII，不受乱码影响）。
+  ///   2. 财务摘要页：GBK 标签的乱码是确定性的，直接在原始字节里搜索
+  ///      「资产负债率」的 GBK 字节序列来定位数值。
+  Future<_SinaFinanceResult> _sinaFinanceData(
+      String code, String market, {double? price}) async {
     double? debtRatio, cashflowMargin, dividendYield;
     int dividendYears = 0;
 
-    // 说明：新浪 F10 页面是 GBK 编码，Dart 无 GBK 解码器，中文全是乱码，
-    // 所以负债率/现金流等需要中文锚点的字段无法从新浪页面解析，
-    // 这些字段改由东方财富 datacenter（UTF-8 JSON）提供。
-    // 新浪页面仅用于提取「连续分红年数」——它只依赖 ASCII 日期，不受乱码影响。
+    // 股息率自算需要股价；调用方未传时自行拉取一次实时行情
+    double? px = price;
+    if (px == null || px <= 0) {
+      try {
+        final q = await _quoteSqt(code, market);
+        px = q?.price;
+      } catch (_) {}
+    }
 
-    // ── 分红历史（仅提取 ASCII 日期，统计连续分红年数） ─────────────────────
+    // ── 分红历史：连续分红年数 + 每股派息 → 自算股息率 ──────────────────────
     try {
       final resp = await _dio.get(
         'https://money.finance.sina.com.cn/corp/go.php/vISSUE_ShareBonus/stockid/$code.phtml',
@@ -677,25 +688,62 @@ class StockApiService {
       );
       final body = _decodeGbkBytes(resp.data as List<int>? ?? []);
 
-      // 每行格式：年份出现在 <td>2023-xx-xx</td>，同行某列有 >0 的派息金额
+      // 新浪分红表列顺序：公告日期 | 分红年度 | 送股 | 转增 | 派息(每10股,元) | ...
+      // 含短横线的日期 td 不会匹配纯数字正则，故行内「纯数字 td」按序为：
+      //   [0]=送股  [1]=转增  [2]=派息(每10股,税前,元)
       final years = <String>{};
-      final rowRe = RegExp(
-        r'<tr[^>]*>(.*?)</tr>',
-        dotAll: true,
-      );
+      double? latestPerShareDiv;
+      String? latestYear;
+      final rowRe = RegExp(r'<tr[^>]*>(.*?)</tr>', dotAll: true);
       for (final rowM in rowRe.allMatches(body)) {
         final row = rowM.group(1)!;
-        // 找年份
         final yrM = RegExp(r'(\d{4})-\d{2}-\d{2}').firstMatch(row);
         if (yrM == null) continue;
-        // 找 >0 的数字（排除全0行：0.00 分红方案为不分配）
-        final hasDiv = RegExp(r'<td[^>]*?>\s*([1-9]\d*\.?\d*)\s*</td>').hasMatch(row);
-        if (hasDiv) years.add(yrM.group(1)!);
+        final nums = RegExp(r'<td[^>]*?>\s*([\d]+\.?\d*)\s*</td>')
+            .allMatches(row)
+            .map((m) => double.tryParse(m.group(1)!) ?? 0.0)
+            .toList();
+        if (nums.isEmpty) continue;
+        // 派息为第 3 个纯数字列（index 2）；不足 3 列时取最后一个非零值兜底
+        final double cashPer10 = nums.length >= 3
+            ? nums[2]
+            : (nums.where((v) => v > 0).isEmpty ? 0.0 : nums.lastWhere((v) => v > 0));
+        final year = yrM.group(1)!;
+        // 仅当该年确有现金派息才计入连续分红年数
+        if (cashPer10 > 0) years.add(year);
+        // 最近一条（页面时间倒序）且有派息的记录用于自算股息率
+        if (latestYear == null && cashPer10 > 0) {
+          latestYear = year;
+          latestPerShareDiv = cashPer10 / 10.0;
+        }
       }
       dividendYears = years.length;
-      _log('新浪F10分红[$code] 连续${dividendYears}年');
+
+      if (latestPerShareDiv != null && latestPerShareDiv > 0 &&
+          px != null && px > 0) {
+        dividendYield = latestPerShareDiv / px * 100;
+      }
+      _log('新浪F10分红[$code] 连续${dividendYears}年 每股派息=$latestPerShareDiv 股息率=$dividendYield');
     } catch (e) {
       _log('新浪F10分红[$code] 异常: $e');
+    }
+
+    // ── 财务摘要：用 GBK 字节序列定位资产负债率 ─────────────────────────────
+    try {
+      final resp = await _dio.get(
+        'https://money.finance.sina.com.cn/corp/go.php/vFD_FinanceSummary/stockid/$code/displaytype/4.phtml',
+        options: Options(
+          responseType: ResponseType.bytes,
+          headers: {'Referer': 'https://finance.sina.com.cn/'},
+        ),
+      );
+      final bytes = resp.data as List<int>? ?? [];
+      // 「资产负债率」的 GBK 字节序列
+      const debtLabelGbk = [0xD7, 0xCA, 0xB2, 0xFA, 0xB8, 0xBA, 0xD5, 0xAE, 0xC2, 0xCA];
+      debtRatio = _numAfterGbkLabel(bytes, debtLabelGbk);
+      _log('新浪F10财务[$code] 负债率=$debtRatio');
+    } catch (e) {
+      _log('新浪F10财务[$code] 异常: $e');
     }
 
     return _SinaFinanceResult(
@@ -704,6 +752,43 @@ class StockApiService {
       dividendYield: dividendYield,
       dividendYears: dividendYears,
     );
+  }
+
+  /// 在原始字节流里定位一段 GBK 标签字节，返回其后出现的第一个「合理」数值。
+  /// 用于 GBK 页面中按确定性字节序列定位中文字段（避免 GBK 解码）。
+  /// [maxValue] 过滤上限；[skipYearLike] 跳过形如 1990~2100 的年份整数。
+  double? _numAfterGbkLabel(List<int> bytes, List<int> label,
+      {double maxValue = 100000, bool skipYearLike = true}) {
+    if (bytes.isEmpty || label.isEmpty) return null;
+    for (int i = 0; i + label.length < bytes.length; i++) {
+      bool matched = true;
+      for (int j = 0; j < label.length; j++) {
+        if (bytes[i + j] != label[j]) { matched = false; break; }
+      }
+      if (!matched) continue;
+      int k = i + label.length;
+      final end = (k + 300).clamp(0, bytes.length);
+      // 在标签之后连续扫描多个数字串，返回第一个通过校验的
+      while (k < end) {
+        final sb = StringBuffer();
+        bool started = false;
+        for (; k < end; k++) {
+          final b = bytes[k];
+          if (b >= 0x30 && b <= 0x39) { sb.writeCharCode(b); started = true; }
+          else if (b == 0x2E && started) { sb.writeCharCode(b); }
+          else if (started) { break; }
+        }
+        if (!started) { k++; continue; }
+        final str = sb.toString();
+        final v = double.tryParse(str);
+        if (v != null && v > 0 && v < maxValue) {
+          final isYearLike = skipYearLike &&
+              !str.contains('.') && v >= 1990 && v <= 2100;
+          if (!isYearLike) return v;
+        }
+      }
+    }
+    return null;
   }
 
   // ── datacenter 辅助 ───────────────────────────────────────────────────────
