@@ -737,8 +737,7 @@ class StockApiService {
       _log('新浪F10分红[$code] 异常: $e');
     }
 
-    // ── 财务指标：vFD_FinancialGuideLine 页含预计算好的比率(%) ─────────────
-    // GBK 已正确解码为中文，用可读中文正则解析（比字节偏移可靠）
+    // ── 财务指标：优先财务指标页取预计算比率；失败则从报表自算 ─────────────
     double? goodwillRatio;
     try {
       final resp = await _dio.get(
@@ -749,11 +748,7 @@ class StockApiService {
         ),
       );
       final html = _decodeGbkBytes(resp.data as List<int>? ?? []);
-
-      // 资产负债率(%)：行首指标名后紧跟最近报告期数值，取第一个（0~100）
       debtRatio = _firstRatioAfterLabel(html, '资产负债率', min: 0, max: 100);
-
-      // 经营现金净流量与净利润的比率(%)：可为负
       cashflowMargin = _firstRatioAfterLabel(
         html, '经营现金净流量与净利润的比率',
         min: -100000, max: 100000, allowNegative: true,
@@ -761,13 +756,12 @@ class StockApiService {
         html, '经营现金净流量对净利润的比率',
         min: -100000, max: 100000, allowNegative: true,
       );
-
       _log('新浪F10财务指标[$code] 负债率=$debtRatio 现金流比=$cashflowMargin');
     } catch (e) {
       _log('新浪F10财务指标[$code] 异常: $e');
     }
 
-    // ── 商誉/净资产：资产负债表页 vFD_BalanceSheet ─────────────────────────
+    // ── 资产负债表：商誉/净资产 + 负债率兜底自算 ───────────────────────────
     try {
       final resp = await _dio.get(
         'https://money.finance.sina.com.cn/corp/go.php/vFD_BalanceSheet/stockid/$code/ctrl/part/displaytype/4.phtml',
@@ -777,7 +771,7 @@ class StockApiService {
         ),
       );
       final html = _decodeGbkBytes(resp.data as List<int>? ?? []);
-      // 「商誉」需精确匹配，避免误命中「商誉减值准备」等；后接金额（元）
+      // 商誉（精确匹配，排除「商誉减值」）
       final goodwill = _firstAmountAfterLabel(html, '商誉', excludeSuffix: ['减值']);
       // 所有者权益(或股东权益)合计
       final equity = _firstAmountAfterLabel(html, '所有者权益（或股东权益）合计')
@@ -786,9 +780,39 @@ class StockApiService {
       if (goodwill != null && equity != null && equity > 0 && goodwill < equity) {
         goodwillRatio = goodwill / equity * 100;
       }
-      _log('新浪F10资产负债[$code] 商誉=$goodwill 净资产=$equity 占比=$goodwillRatio');
+      // 负债率兜底：负债合计 / 资产总计 * 100（词边界避免命中「流动负债合计」）
+      if (debtRatio == null) {
+        final totalLiab = _firstAmountAfterLabel(html, '负债合计', wordBoundary: true);
+        final totalAsset = _firstAmountAfterLabel(html, '资产总计', wordBoundary: true);
+        if (totalLiab != null && totalAsset != null && totalAsset > 0) {
+          debtRatio = totalLiab / totalAsset * 100;
+        }
+      }
+      _log('新浪F10资产负债[$code] 商誉=$goodwill 净资产=$equity 占比=$goodwillRatio 负债率=$debtRatio');
     } catch (e) {
       _log('新浪F10资产负债[$code] 异常: $e');
+    }
+
+    // ── 现金流比兜底：经营现金流净额 / 净利润 * 100 ────────────────────────
+    if (cashflowMargin == null) {
+      try {
+        final resp = await _dio.get(
+          'https://money.finance.sina.com.cn/corp/go.php/vFD_CashFlow/stockid/$code/ctrl/part/displaytype/4.phtml',
+          options: Options(
+            responseType: ResponseType.bytes,
+            headers: {'Referer': 'https://finance.sina.com.cn/'},
+          ),
+        );
+        final html = _decodeGbkBytes(resp.data as List<int>? ?? []);
+        final opCash = _firstAmountAfterLabel(html, '经营活动产生的现金流量净额');
+        final netProfit = _firstAmountAfterLabel(html, '净利润', wordBoundary: true);
+        if (opCash != null && netProfit != null && netProfit != 0) {
+          cashflowMargin = opCash / netProfit * 100;
+        }
+        _log('新浪F10现金流[$code] 经营现金=$opCash 净利润=$netProfit 现金流比=$cashflowMargin');
+      } catch (e) {
+        _log('新浪F10现金流[$code] 异常: $e');
+      }
     }
 
     return _SinaFinanceResult(
@@ -823,13 +847,18 @@ class StockApiService {
 
   /// 在已解码 HTML 中定位「指标名」后紧跟的第一个金额（元，可为大数）。
   /// [excludeSuffix] 若标签后紧跟这些字符则跳过（避免误命中派生科目）。
+  /// [wordBoundary] 要求标签前一个字符不是中文（避免「负债合计」误命中
+  /// 「流动负债合计」「非流动负债合计」等前缀复合词）。
   double? _firstAmountAfterLabel(String html, String label,
-      {List<String> excludeSuffix = const []}) {
+      {List<String> excludeSuffix = const [], bool wordBoundary = false}) {
     int from = 0;
+    final cjk = RegExp(r'[\u4e00-\u9fff]');
     while (true) {
       final idx = html.indexOf(label, from);
       if (idx < 0) return null;
       from = idx + label.length;
+      // 词边界：标签前一字符若为中文，说明是复合词的一部分，跳过
+      if (wordBoundary && idx > 0 && cjk.hasMatch(html[idx - 1])) continue;
       // 检查排除后缀
       final after = html.substring(from, (from + 6).clamp(0, html.length));
       if (excludeSuffix.any((s) => after.startsWith(s))) continue;
