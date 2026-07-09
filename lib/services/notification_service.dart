@@ -69,7 +69,7 @@ class NotificationService {
         await _send(
           id: code.hashCode & 0x7FFFFFFF,
           title: '收割提醒 · $name',
-          body: '现价 ¥${price.toStringAsFixed(2)} 已触及目标价 ¥${targetPrice.toStringAsFixed(2)}，可考虑按计划回收部分仓位',
+          body: '现价 ¥${price.toStringAsFixed(3)} 已触及目标价 ¥${targetPrice.toStringAsFixed(3)}，可考虑按计划回收部分仓位',
           channelId: 'harvest',
           channelName: '收割提醒',
         );
@@ -84,7 +84,7 @@ class NotificationService {
         await _send(
           id: (code.hashCode + 1) & 0x7FFFFFFF,
           title: '警戒提醒 · $name',
-          body: '现价 ¥${price.toStringAsFixed(2)} 已触及警戒价 ¥${alertPrice.toStringAsFixed(2)}，请关注风险',
+          body: '现价 ¥${price.toStringAsFixed(3)} 已触及警戒价 ¥${alertPrice.toStringAsFixed(3)}，请关注风险',
           channelId: 'alert',
           channelName: '警戒提醒',
         );

@@ -73,12 +73,12 @@ class _SeedPlanScreenState extends State<SeedPlanScreen>
   // ── 播种计划参数
   late final TextEditingController _capitalController;
   late final TextEditingController _startPriceController;
-  final _seedCountController = TextEditingController(text: '5');
-  final _dropStepController = TextEditingController(text: '8');
+  late final TextEditingController _seedCountController;
+  late final TextEditingController _dropStepController;
   final _reboundController = TextEditingController(text: '30');
   final _commissionController = TextEditingController(text: '5');
   late String _assetType;
-  WeightMode _weightMode = WeightMode.equal;
+  late WeightMode _weightMode;
 
   // ── 定投模式参数
   final _dcaAmountController = TextEditingController(text: '3000');
@@ -99,10 +99,27 @@ class _SeedPlanScreenState extends State<SeedPlanScreen>
     _capitalController = TextEditingController(text: '100000');
     final startPrice = ctx?.currentPrice ?? ctx?.avgCostPrice;
     _startPriceController = TextEditingController(
-      text: startPrice != null ? startPrice.toStringAsFixed(2) : '10.00',
+      text: startPrice != null ? startPrice.toStringAsFixed(3) : '10.000',
     );
     if (startPrice != null) {
-      _dcaPriceLimitController.text = startPrice.toStringAsFixed(2);
+      _dcaPriceLimitController.text = startPrice.toStringAsFixed(3);
+    }
+    // 排雷页策略顾问推荐参数，缺失时回落到经验默认值
+    _seedCountController = TextEditingController(
+      text: (ctx?.recommendSeedCount ?? 5).toString(),
+    );
+    _dropStepController = TextEditingController(
+      text: (ctx?.recommendDropStep ?? 8).toString(),
+    );
+    _weightMode = _weightModeFromKey(ctx?.weightModeKey);
+  }
+
+  WeightMode _weightModeFromKey(String? key) {
+    switch (key) {
+      case 'pyramid':  return WeightMode.pyramid;
+      case 'inverted': return WeightMode.inverted;
+      case 'equal':    return WeightMode.equal;
+      default:         return WeightMode.equal;
     }
   }
 

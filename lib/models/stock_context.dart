@@ -21,6 +21,16 @@ class StockContext {
   final double? planBuyPrice;
   final double? planQuantity;
 
+  /// 来自排雷页策略顾问的算法推荐（跨页面预填计划参数）
+  final String? seedAlgo;        // 'pyramid' | 'grid' | 'dca' | 'equal'
+  final String? weightModeKey;   // 播种页 WeightMode 名称
+  final String? harvestAlgo;     // 'grid' | 'chandelier' | 'percentile'
+  final String? harvestModeKey;  // 收割页 mode 名称
+  final int? recommendSeedCount; // 推荐批数
+  final double? recommendDropStep;  // 推荐下跌间距（%）
+  final double? recommendGridStep;  // 推荐收割网格间距（%）
+  final double? recommendAtrMultiple; // 推荐 ATR/吊灯倍数
+
   const StockContext({
     this.code,
     this.name,
@@ -35,6 +45,14 @@ class StockContext {
     this.avgCostPrice,
     this.planBuyPrice,
     this.planQuantity,
+    this.seedAlgo,
+    this.weightModeKey,
+    this.harvestAlgo,
+    this.harvestModeKey,
+    this.recommendSeedCount,
+    this.recommendDropStep,
+    this.recommendGridStep,
+    this.recommendAtrMultiple,
   });
 
   StockContext copyWith({
@@ -51,6 +69,14 @@ class StockContext {
     double? avgCostPrice,
     double? planBuyPrice,
     double? planQuantity,
+    String? seedAlgo,
+    String? weightModeKey,
+    String? harvestAlgo,
+    String? harvestModeKey,
+    int? recommendSeedCount,
+    double? recommendDropStep,
+    double? recommendGridStep,
+    double? recommendAtrMultiple,
   }) {
     return StockContext(
       code: code ?? this.code,
@@ -66,6 +92,14 @@ class StockContext {
       avgCostPrice: avgCostPrice ?? this.avgCostPrice,
       planBuyPrice: planBuyPrice ?? this.planBuyPrice,
       planQuantity: planQuantity ?? this.planQuantity,
+      seedAlgo: seedAlgo ?? this.seedAlgo,
+      weightModeKey: weightModeKey ?? this.weightModeKey,
+      harvestAlgo: harvestAlgo ?? this.harvestAlgo,
+      harvestModeKey: harvestModeKey ?? this.harvestModeKey,
+      recommendSeedCount: recommendSeedCount ?? this.recommendSeedCount,
+      recommendDropStep: recommendDropStep ?? this.recommendDropStep,
+      recommendGridStep: recommendGridStep ?? this.recommendGridStep,
+      recommendAtrMultiple: recommendAtrMultiple ?? this.recommendAtrMultiple,
     );
   }
 }

@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import '../models/stock.dart';
 import '../models/stock_context.dart';
 import '../services/stock_api_service.dart';
+import '../services/strategy_advisor_service.dart';
 import '../theme/app_theme.dart';
 import 'seed_plan_screen.dart';
 
@@ -36,6 +37,8 @@ class _SeedScreeningScreenState extends State<SeedScreeningScreen> {
   String? _autoDivStability, _autoTrend, _autoTrendTip;
   bool    _isFund = false;
 
+  StrategyAdvice? _advice;
+
   bool   _loading = false;
   String _status  = '输入A股代码/基金代码或名称后，点击「自动拉取并排雷」，系统将自动填充行情、估值、财务、分红数据。';
 
@@ -49,9 +52,9 @@ class _SeedScreeningScreenState extends State<SeedScreeningScreen> {
       if (ctx.market != null) _market = ctx.market!;
       if (ctx.currentPrice != null && ctx.currentPrice! > 0) {
         final p = ctx.currentPrice!;
-        _seedPriceController.text = (p * 0.92).toStringAsFixed(2);
-        _harvestPriceController.text = (p * 1.15).toStringAsFixed(2);
-        _maxAddPriceController.text = (p * 0.70).toStringAsFixed(2);
+        _seedPriceController.text = (p * 0.92).toStringAsFixed(3);
+        _harvestPriceController.text = (p * 1.15).toStringAsFixed(3);
+        _maxAddPriceController.text = (p * 0.70).toStringAsFixed(3);
         _autoPrice = p;
       }
       _status = '已从持仓载入「${ctx.name ?? ctx.code ?? ''}」，可直接点击「自动拉取并排雷」更新数据。';
@@ -132,6 +135,12 @@ class _SeedScreeningScreenState extends State<SeedScreeningScreen> {
       else notes.add('${isFundDetected ? "基金分红" : "财务/质押/分红"}数据未取到，相关项仍需人工核验');
       if (autoSt)  notes.add('检测到ST状态，已自动标记');
       if (autoDel) notes.add('检测到退市风险，已自动标记');
+      final advice = StrategyAdvisorService.advise(
+        klines: klines,
+        pePercentile: pe?.toDouble(),
+        pbPercentile: pb?.toDouble(),
+        isFund: isFundDetected,
+      );
       setState(() {
         // 名称优先用行情接口返回值，但若为空（如新浪备用接口不返回名称），
         // 保留搜索结果或用户已填写的名称，避免覆盖为空
@@ -146,12 +155,13 @@ class _SeedScreeningScreenState extends State<SeedScreeningScreen> {
         _autoDivYield = risk.dividendYield; _autoDivYears = risk.dividendYears;
         _autoDivStability = risk.dividendStability;
         _autoTrend = trend; _autoTrendTip = _trendTip(trend, klines);
+        _advice = advice;
         if (autoSt)  _isSt       = true;
         if (autoDel) _delistRisk = true;
         if (_seedPriceController.text.isEmpty && price > 0)
-          _seedPriceController.text = (price * 0.92).toStringAsFixed(2);
+          _seedPriceController.text = (price * 0.92).toStringAsFixed(3);
         if (_harvestPriceController.text.isEmpty && price > 0)
-          _harvestPriceController.text = (price * 1.20).toStringAsFixed(2);
+          _harvestPriceController.text = (price * 1.20).toStringAsFixed(3);
         _loading = false;
         _status = '自动填充完成。${notes.join('；')}。';
       });
@@ -239,9 +249,9 @@ class _SeedScreeningScreenState extends State<SeedScreeningScreen> {
     final seed=double.tryParse(_seedPriceController.text)??0.0;
     final maxA=double.tryParse(_maxAddPriceController.text)??0.0;
     final harv=double.tryParse(_harvestPriceController.text)??0.0;
-    if (cur>0&&seed>0&&cur<=seed) alerts.add('当前价（${cur.toStringAsFixed(2)}）≤ 播种触发线（${seed.toStringAsFixed(2)}），可按计划播种');
-    if (cur>0&&maxA>0&&cur>=maxA) alerts.add('当前价（${cur.toStringAsFixed(2)}）≥ 最高加仓线（${maxA.toStringAsFixed(2)}），禁止继续加仓');
-    if (cur>0&&harv>0&&cur>=harv) alerts.add('当前价（${cur.toStringAsFixed(2)}）≥ 目标收割价（${harv.toStringAsFixed(2)}），可考虑分批收割');
+    if (cur>0&&seed>0&&cur<=seed) alerts.add('当前价（${cur.toStringAsFixed(3)}）≤ 播种触发线（${seed.toStringAsFixed(3)}），可按计划播种');
+    if (cur>0&&maxA>0&&cur>=maxA) alerts.add('当前价（${cur.toStringAsFixed(3)}）≥ 最高加仓线（${maxA.toStringAsFixed(3)}），禁止继续加仓');
+    if (cur>0&&harv>0&&cur>=harv) alerts.add('当前价（${cur.toStringAsFixed(3)}）≥ 目标收割价（${harv.toStringAsFixed(3)}），可考虑分批收割');
     if (alerts.isEmpty) alerts.add('暂未触发价格提醒，继续观察计划价位');
 
     if (hard.isNotEmpty) return _ScreeningResult(score:0,level:'禁止播种',color:AppTheme.riskRed,hardBlocks:hard,warnings:warn,strengths:str,priceAlerts:alerts);
@@ -275,6 +285,11 @@ class _SeedScreeningScreenState extends State<SeedScreeningScreen> {
           // ② 综合评分结果
           _ResultCard(result: result, name: _nameController.text),
           const SizedBox(height: 16),
+          // ②.5 策略算法推荐（离线特征识别）
+          if (_advice != null) ...[
+            _StrategyAdviceCard(advice: _advice!, isFund: _isFund),
+            const SizedBox(height: 16),
+          ],
           // ③ 自动拉取区块标题
           _SectionLabel(label: '自动拉取数据', icon: Icons.cloud_done_outlined, color: AppTheme.accent),
           const SizedBox(height: 8),
@@ -332,6 +347,7 @@ class _SeedScreeningScreenState extends State<SeedScreeningScreen> {
               result: result,
               onTap: () {
                 final price = double.tryParse(_seedPriceController.text);
+                final adv = _advice;
                 final ctx = StockContext(
                   code: _codeController.text.trim().isEmpty
                       ? null
@@ -339,12 +355,20 @@ class _SeedScreeningScreenState extends State<SeedScreeningScreen> {
                   name: _nameController.text.trim().isEmpty
                       ? null
                       : _nameController.text.trim(),
-                  assetType: 'stock',
+                  assetType: _isFund ? 'fund' : 'stock',
                   market: _market,
                   pePercentile: _autoPePct?.toDouble(),
                   pbPercentile: _autoPbPct?.toDouble(),
                   industryCycle: _autoTrend,
                   currentPrice: price ?? _autoPrice,
+                  seedAlgo: adv?.seedAlgo.name,
+                  weightModeKey: adv?.seedAlgo.weightModeKey,
+                  harvestAlgo: adv?.harvestAlgo.name,
+                  harvestModeKey: adv?.harvestAlgo.modeKey,
+                  recommendSeedCount: adv?.seedCount,
+                  recommendDropStep: adv?.dropStepPct,
+                  recommendGridStep: adv?.gridStepPct,
+                  recommendAtrMultiple: adv?.atrMultiple,
                 );
                 Navigator.push(
                   context,
@@ -389,6 +413,152 @@ class _ProceedToSeedButton extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+// ── 策略算法推荐卡 ────────────────────────────────────────────────────────────
+class _StrategyAdviceCard extends StatelessWidget {
+  final StrategyAdvice advice;
+  final bool isFund;
+  const _StrategyAdviceCard({required this.advice, required this.isFund});
+
+  @override
+  Widget build(BuildContext context) {
+    final f = advice.features;
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            AppTheme.accent.withValues(alpha: 0.16),
+            AppTheme.primaryGreen.withValues(alpha: 0.08),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppTheme.accent.withValues(alpha: 0.4)),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          const Icon(Icons.auto_awesome, size: 16, color: AppTheme.accent),
+          const SizedBox(width: 6),
+          const Text('智能策略推荐',
+              style: TextStyle(color: AppTheme.accent, fontSize: 15, fontWeight: FontWeight.w800)),
+          const Spacer(),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: BoxDecoration(
+              color: AppTheme.accent.withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: const Text('离线特征识别',
+                style: TextStyle(color: AppTheme.accent, fontSize: 10, fontWeight: FontWeight.w700)),
+          ),
+        ]),
+        const SizedBox(height: 12),
+        Text(advice.summary,
+            style: const TextStyle(color: AppTheme.textPrimary, fontSize: 13, height: 1.5, fontWeight: FontWeight.w600)),
+        const SizedBox(height: 14),
+        Row(children: [
+          Expanded(child: _FeatChip(
+            label: '波动率 ATR%',
+            value: f.atrPct != null ? '${(f.atrPct! * 100).toStringAsFixed(1)}%' : '—',
+          )),
+          Expanded(child: _FeatChip(
+            label: '趋势强度 R²',
+            value: f.hasEnoughData ? f.trendStrength.toStringAsFixed(2) : '—',
+          )),
+          Expanded(child: _FeatChip(
+            label: isFund ? '价格分位' : '综合分位',
+            value: f.hasEnoughData ? '${(f.pricePercentile * 100).round()}%' : '—',
+          )),
+          Expanded(child: _FeatChip(
+            label: '距高点回撤',
+            value: f.hasEnoughData ? '${(f.drawdown * 100).round()}%' : '—',
+          )),
+        ]),
+        const SizedBox(height: 14),
+        _AlgoRow(
+          icon: Icons.grass_outlined,
+          tag: '播种',
+          algo: advice.seedAlgo.label,
+          reason: advice.seedReason,
+          color: AppTheme.primaryGreen,
+        ),
+        const SizedBox(height: 8),
+        _AlgoRow(
+          icon: Icons.content_cut,
+          tag: '收割',
+          algo: advice.harvestAlgo.label,
+          reason: advice.harvestReason,
+          color: AppTheme.accentGold,
+        ),
+        const SizedBox(height: 12),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          decoration: BoxDecoration(
+            color: AppTheme.bgCardLight,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Row(children: [
+            const Icon(Icons.tune, size: 13, color: AppTheme.textSecondary),
+            const SizedBox(width: 6),
+            Expanded(child: Text(
+              '推荐参数：批数 ${advice.seedCount} · 下跌间距 ${advice.dropStepPct}% · '
+              '网格 ${advice.gridStepPct}% · ATR/吊灯 ${advice.atrMultiple}倍',
+              style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11, height: 1.35),
+            )),
+          ]),
+        ),
+        const SizedBox(height: 8),
+        const Text('跳转「制定播种计划」后将自动带入以上推荐参数，可随时手动调整。',
+            style: TextStyle(color: AppTheme.textMuted, fontSize: 11, height: 1.35)),
+      ]),
+    );
+  }
+}
+
+class _FeatChip extends StatelessWidget {
+  final String label;
+  final String value;
+  const _FeatChip({required this.label, required this.value});
+  @override
+  Widget build(BuildContext context) {
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text(label, style: const TextStyle(color: AppTheme.textMuted, fontSize: 10)),
+      const SizedBox(height: 4),
+      Text(value, style: const TextStyle(color: AppTheme.textPrimary, fontSize: 14, fontWeight: FontWeight.w700)),
+    ]);
+  }
+}
+
+class _AlgoRow extends StatelessWidget {
+  final IconData icon;
+  final String tag;
+  final String algo;
+  final String reason;
+  final Color color;
+  const _AlgoRow({required this.icon, required this.tag, required this.algo, required this.reason, required this.color});
+  @override
+  Widget build(BuildContext context) {
+    return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Container(
+        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+        decoration: BoxDecoration(color: color.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(5)),
+        child: Row(children: [
+          Icon(icon, size: 12, color: color),
+          const SizedBox(width: 4),
+          Text(tag, style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w700)),
+        ]),
+      ),
+      const SizedBox(width: 8),
+      Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(algo, style: TextStyle(color: color, fontSize: 13, fontWeight: FontWeight.w700)),
+        const SizedBox(height: 2),
+        Text(reason, style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11, height: 1.35)),
+      ])),
+    ]);
   }
 }
 
@@ -727,7 +897,7 @@ class _AutoDataCard extends StatelessWidget {
       Row(children: [
         Expanded(child: _ReadItem(
           label: '当前价',
-          value: price != null ? '${price!.toStringAsFixed(2)} 元' : '—',
+          value: price != null ? '${price!.toStringAsFixed(3)} 元' : '—',
           badge: null,
         )),
         Expanded(child: _ReadItem(
@@ -860,7 +1030,7 @@ class _FundDataCard extends StatelessWidget {
       Row(children: [
         Expanded(child: _ReadItem(
           label: '当前价',
-          value: price != null ? '${price!.toStringAsFixed(4)} 元' : '—',
+          value: price != null ? '${price!.toStringAsFixed(3)} 元' : '—',
         )),
         Expanded(child: _ReadItem(
           label: 'PE/PB百分位',

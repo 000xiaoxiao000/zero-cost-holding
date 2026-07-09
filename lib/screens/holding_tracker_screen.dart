@@ -1100,7 +1100,7 @@ class _RecoverDialogState extends State<_RecoverDialog> {
     super.initState();
     final batch = widget.batch;
     _priceController =
-        TextEditingController(text: batch.sellPrice?.toStringAsFixed(2) ?? '');
+        TextEditingController(text: batch.sellPrice?.toStringAsFixed(3) ?? '');
     _qtyController = TextEditingController(
       text: (batch.sellQuantity ?? batch.remainingQuantity).toString(),
     );
@@ -1273,7 +1273,7 @@ class _ImportTextDialogState extends State<_ImportTextDialog> {
           (n) => n > 0 && n < 10000 && n.toStringAsFixed(0) != code,
           orElse: () => numbers.first,
         );
-        _priceController.text = price.toStringAsFixed(2);
+        _priceController.text = price.toStringAsFixed(3);
       }
       if (numbers.length > 1 && _qtyController.text.trim().isEmpty) {
         final quantity = numbers.firstWhere(

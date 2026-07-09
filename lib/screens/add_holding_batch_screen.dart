@@ -47,9 +47,9 @@ class _AddHoldingBatchScreenState
     _nameController = TextEditingController(text: ctx?.name ?? '');
     _priceController = TextEditingController(
       text: ctx?.planBuyPrice != null
-          ? ctx!.planBuyPrice!.toStringAsFixed(_assetType == 'fund' ? 4 : 2)
+          ? ctx!.planBuyPrice!.toStringAsFixed(3)
           : ctx?.currentPrice != null
-              ? ctx!.currentPrice!.toStringAsFixed(_assetType == 'fund' ? 4 : 2)
+              ? ctx!.currentPrice!.toStringAsFixed(3)
               : '',
     );
     _qtyController = TextEditingController(

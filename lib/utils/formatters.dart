@@ -1,7 +1,7 @@
 import 'package:intl/intl.dart';
 
 class Formatters {
-  static final _price = NumberFormat('#,##0.00', 'zh_CN');
+  static final _price = NumberFormat('#,##0.000', 'zh_CN');
   static final _pctSimple = NumberFormat('#,##0.00', 'zh_CN');
   static final _large = NumberFormat('#,##0.00', 'zh_CN');
   static final _date = DateFormat('yyyy-MM-dd');

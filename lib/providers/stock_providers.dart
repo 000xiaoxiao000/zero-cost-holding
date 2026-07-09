@@ -143,3 +143,23 @@ final atrProvider =
       await StockApiService().fetchKlineDaily(args.$1, args.$2, limit: 60);
   return AtrService.calculate(klines);
 });
+
+// ── 吊灯止盈参考高点 Provider（近 22 日最高价，从日K计算）───────────────────────
+
+final recentHighProvider =
+    FutureProvider.autoDispose.family<double?, (String, String)>(
+        (ref, args) async {
+  final klines =
+      await StockApiService().fetchKlineDaily(args.$1, args.$2, limit: 60);
+  if (klines.isEmpty) return null;
+  final window = klines.length >= 22
+      ? klines.sublist(klines.length - 22)
+      : klines;
+  double? high;
+  for (final k in window) {
+    final h = k['high'];
+    final v = h is num ? h.toDouble() : double.tryParse('${h ?? ''}');
+    if (v != null && (high == null || v > high)) high = v;
+  }
+  return high;
+});

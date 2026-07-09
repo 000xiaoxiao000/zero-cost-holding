@@ -24,22 +24,27 @@ class _HarvestCalculatorScreenState
   late final TextEditingController _currentPriceController;
   late final TextEditingController _remainingCostController;
   late final TextEditingController _quantityController;
-  final _gridStepController = TextEditingController(text: '8');
+  late final TextEditingController _gridStepController;
   final _atrController = TextEditingController(text: '0.45');
-  final _atrMultipleController = TextEditingController(text: '2');
+  late final TextEditingController _atrMultipleController;
+  late final TextEditingController _recentHighController;
 
   late String _assetType;
-  String _mode = 'grid';
+  late String _mode;
   bool _atrAutoLoading = false;
   bool _atrAutoLoaded = false;
+  bool _highAutoLoading = false;
+  bool _highAutoLoaded = false;
 
   @override
   void initState() {
     super.initState();
     final ctx = widget.stockContext;
     _assetType = ctx?.assetType ?? 'stock';
+    // 排雷页推荐的收割模式，缺失时默认网格
+    _mode = ctx?.harvestModeKey ?? 'grid';
     _currentPriceController = TextEditingController(
-      text: ctx?.currentPrice?.toStringAsFixed(2) ?? '10.00',
+      text: ctx?.currentPrice?.toStringAsFixed(3) ?? '10.000',
     );
     _remainingCostController = TextEditingController(
       text: ctx?.remainingCost?.toStringAsFixed(0) ?? '20000',
@@ -47,6 +52,40 @@ class _HarvestCalculatorScreenState
     _quantityController = TextEditingController(
       text: ctx?.remainingQty?.toStringAsFixed(0) ?? '3000',
     );
+    _gridStepController = TextEditingController(
+      text: (ctx?.recommendGridStep ?? 8).toString(),
+    );
+    _atrMultipleController = TextEditingController(
+      text: (ctx?.recommendAtrMultiple ?? 2).toString(),
+    );
+    _recentHighController = TextEditingController(
+      text: ctx?.currentPrice?.toStringAsFixed(3) ?? '10.000',
+    );
+    if (_mode == 'atr' || _mode == 'chandelier') {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _autoLoadAtr();
+        if (_mode == 'chandelier') _autoLoadRecentHigh();
+      });
+    }
+  }
+
+  /// 吊灯模式自动拉取近 22 日最高价作为止盈基准
+  Future<void> _autoLoadRecentHigh() async {
+    final ctx = widget.stockContext;
+    if (ctx?.code == null || ctx?.market == null) return;
+    if (_highAutoLoaded || _highAutoLoading) return;
+    setState(() => _highAutoLoading = true);
+    final high =
+        await ref.read(recentHighProvider((ctx!.code!, ctx.market!)).future);
+    if (mounted && high != null && high > 0) {
+      _recentHighController.text = high.toStringAsFixed(3);
+      setState(() {
+        _highAutoLoading = false;
+        _highAutoLoaded = true;
+      });
+    } else {
+      setState(() => _highAutoLoading = false);
+    }
   }
 
   /// 当切换到 ATR 模式且存在 stock context 时自动从 K 线拉取 ATR
@@ -77,6 +116,8 @@ class _HarvestCalculatorScreenState
       (double.tryParse(_gridStepController.text) ?? 0) / 100;
   double get _atr => double.tryParse(_atrController.text) ?? 0;
   double get _atrMultiple => double.tryParse(_atrMultipleController.text) ?? 0;
+  double get _recentHigh =>
+      double.tryParse(_recentHighController.text) ?? 0;
 
   String get _unit => _isFund ? '份' : '股';
 
@@ -88,6 +129,7 @@ class _HarvestCalculatorScreenState
     _gridStepController.dispose();
     _atrController.dispose();
     _atrMultipleController.dispose();
+    _recentHighController.dispose();
     super.dispose();
   }
 
@@ -96,11 +138,22 @@ class _HarvestCalculatorScreenState
     final quantity = math.max(0.0, _quantity);
     final remainingCost = math.max(0.0, _remainingCost);
 
-    final lower = _mode == 'grid'
-        ? price * (1 - _gridStep)
-        : math.max(0.0, price - _atr * _atrMultiple);
-    final upper =
-        _mode == 'grid' ? price * (1 + _gridStep) : price + _atr * _atrMultiple;
+    final double lower;
+    final double upper;
+    if (_mode == 'grid') {
+      lower = price * (1 - _gridStep);
+      upper = price * (1 + _gridStep);
+    } else if (_mode == 'chandelier') {
+      // 吊灯移动止盈：止盈线 = 近期高点 − ATR × 倍数；跌破即收割
+      final high = _recentHigh > 0 ? _recentHigh : price;
+      final stopLine = math.max(0.0, high - _atr * _atrMultiple);
+      lower = stopLine;
+      upper = high; // 高点作为回收计价参考（利润奔跑上限）
+    } else {
+      // ATR 通道
+      lower = math.max(0.0, price - _atr * _atrMultiple);
+      upper = price + _atr * _atrMultiple;
+    }
 
     final zeroCostSellQty = upper > 0
         ? _roundSellQuantity(math.min(quantity, remainingCost / upper))
@@ -158,13 +211,17 @@ class _HarvestCalculatorScreenState
             gridStepController: _gridStepController,
             atrController: _atrController,
             atrMultipleController: _atrMultipleController,
+            recentHighController: _recentHighController,
             atrAutoLoading: _atrAutoLoading,
             atrAutoLoaded: _atrAutoLoaded,
+            highAutoLoading: _highAutoLoading,
+            highAutoLoaded: _highAutoLoaded,
             hasStockContext: widget.stockContext?.code != null,
             onAssetTypeChanged: (value) => setState(() => _assetType = value),
             onModeChanged: (value) {
               setState(() => _mode = value);
-              if (value == 'atr') _autoLoadAtr();
+              if (value == 'atr' || value == 'chandelier') _autoLoadAtr();
+              if (value == 'chandelier') _autoLoadRecentHigh();
             },
             onChanged: () => setState(() {}),
           ),
@@ -271,7 +328,7 @@ class _IntroCard extends StatelessWidget {
           ),
           SizedBox(height: 8),
           Text(
-            '用网格或ATR计算纪律价位，只输出策略建议提示。',
+            '用网格、ATR通道或吊灯移动止盈计算纪律价位，只输出策略建议提示。',
             style: TextStyle(
               color: AppTheme.textSecondary,
               fontSize: 13,
@@ -293,8 +350,11 @@ class _ConfigCard extends StatelessWidget {
   final TextEditingController gridStepController;
   final TextEditingController atrController;
   final TextEditingController atrMultipleController;
+  final TextEditingController recentHighController;
   final bool atrAutoLoading;
   final bool atrAutoLoaded;
+  final bool highAutoLoading;
+  final bool highAutoLoaded;
   final bool hasStockContext;
   final ValueChanged<String> onAssetTypeChanged;
   final ValueChanged<String> onModeChanged;
@@ -309,8 +369,11 @@ class _ConfigCard extends StatelessWidget {
     required this.gridStepController,
     required this.atrController,
     required this.atrMultipleController,
+    required this.recentHighController,
     required this.atrAutoLoading,
     required this.atrAutoLoaded,
+    required this.highAutoLoading,
+    required this.highAutoLoaded,
     required this.hasStockContext,
     required this.onAssetTypeChanged,
     required this.onModeChanged,
@@ -347,12 +410,9 @@ class _ConfigCard extends StatelessWidget {
             onRight: () => onAssetTypeChanged('fund'),
           ),
           const SizedBox(height: 12),
-          _SegmentedRow(
-            leftLabel: '网格',
-            rightLabel: 'ATR',
-            selectedRight: mode == 'atr',
-            onLeft: () => onModeChanged('grid'),
-            onRight: () => onModeChanged('atr'),
+          _ModeTriRow(
+            mode: mode,
+            onChanged: onModeChanged,
           ),
           const SizedBox(height: 14),
           Row(
@@ -444,6 +504,71 @@ class _ConfigCard extends StatelessWidget {
               onChanged: onChanged,
             ),
           ],
+          if (mode == 'chandelier') ...[
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: Stack(
+                    children: [
+                      _NumberField(
+                        label: isFund ? '近22日最高净值' : '近22日最高价',
+                        suffix: '元',
+                        controller: recentHighController,
+                        decimals: 4,
+                        onChanged: onChanged,
+                      ),
+                      if (highAutoLoading)
+                        const Positioned(
+                          right: 0,
+                          top: 20,
+                          child: SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: AppTheme.accent,
+                            ),
+                          ),
+                        ),
+                      if (highAutoLoaded && hasStockContext)
+                        const Positioned(
+                          right: 0,
+                          top: 22,
+                          child: Icon(
+                            Icons.auto_awesome,
+                            size: 13,
+                            color: AppTheme.primaryGreen,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _NumberField(
+                    label: '吊灯倍数',
+                    suffix: '倍',
+                    controller: atrMultipleController,
+                    onChanged: onChanged,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              decoration: BoxDecoration(
+                color: AppTheme.accentGold.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Text(
+                '吊灯止盈线 = 近期高点 − ATR × 倍数。价格创新高则止盈线随之上移，跌破止盈线才触发收割，适合单边上涨行情。',
+                style: TextStyle(
+                    color: AppTheme.textSecondary, fontSize: 11, height: 1.4),
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -458,16 +583,23 @@ class _RangeCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final title = mode == 'grid'
+        ? '网格区间'
+        : mode == 'chandelier'
+            ? '吊灯止盈区间'
+            : 'ATR波动区间';
+    final lowerLabel = mode == 'chandelier' ? '止盈触发线（跌破收割）' : '播种触发线';
+    final upperLabel = mode == 'chandelier' ? '高点计价参考' : '回收触发线';
     return _InfoCard(
-      title: mode == 'grid' ? '网格区间' : 'ATR波动区间',
+      title: title,
       children: [
         _MetricLine(
-          label: '播种触发线',
+          label: lowerLabel,
           value: '¥${Formatters.price(plan.lowerPrice)}',
           color: AppTheme.primaryGreen,
         ),
         _MetricLine(
-          label: '回收触发线',
+          label: upperLabel,
           value: '¥${Formatters.price(plan.upperPrice)}',
           color: AppTheme.accentGold,
         ),
@@ -818,6 +950,39 @@ class _SegmentButton extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _ModeTriRow extends StatelessWidget {
+  final String mode;
+  final ValueChanged<String> onChanged;
+
+  const _ModeTriRow({required this.mode, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    const items = [
+      ('grid', '网格'),
+      ('atr', 'ATR通道'),
+      ('chandelier', '吊灯止盈'),
+    ];
+    return Row(
+      children: List.generate(items.length, (i) {
+        final key = items[i].$1;
+        final label = items[i].$2;
+        final selected = mode == key;
+        return Expanded(
+          child: Padding(
+            padding: EdgeInsets.only(right: i == items.length - 1 ? 0 : 8),
+            child: _SegmentButton(
+              label: label,
+              selected: selected,
+              onTap: () => onChanged(key),
+            ),
+          ),
+        );
+      }),
     );
   }
 }

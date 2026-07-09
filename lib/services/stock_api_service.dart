@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:developer' as dev;
 
 import 'package:dio/dio.dart';
+import 'package:gbk_codec/gbk_codec.dart';
 import '../models/stock.dart';
 import '../models/watchlist.dart';
 import 'api_config.dart';
@@ -101,12 +102,17 @@ class StockApiService {
 
   String _decodeGbkBytes(List<int> bytes) {
     if (bytes.isEmpty) return '';
+    // 优先 UTF-8：部分接口已是 UTF-8，解码无替换符即采用
     try {
       final s = utf8.decode(bytes);
       if (!s.contains('\uFFFD')) return s;
     } catch (_) {}
-    // 无 GBK 解码器，回退 latin1：ASCII 段（数字/日期/符号）完全正确，
-    // 中文段为乱码（需调用方用 UTF-8 接口另行补充中文）
+    // 新浪财经 F10 等页面为 GBK/GB2312。
+    // 注意：必须用 gbk_bytes.decode（含双字节合并逻辑），
+    // gbk.decode 有 bug（逐单字节查表，双字节合并被注释掉），会解出乱码。
+    try {
+      return gbk_bytes.decode(bytes);
+    } catch (_) {}
     return latin1.decode(bytes, allowInvalid: true);
   }
 
@@ -660,12 +666,12 @@ class StockApiService {
 
   // ── 新浪F10财务 ───────────────────────────────────────────────────────────
 
-  /// 新浪 F10 页面是 GBK 编码，Dart 无 GBK 解码器，中文全是乱码。
-  /// 策略：
-  ///   1. 分红页：靠 ASCII 日期统计连续分红年数；靠列位置提取「每10股派息」，
-  ///      结合当前股价自算股息率（数字均为 ASCII，不受乱码影响）。
-  ///   2. 财务摘要页：GBK 标签的乱码是确定性的，直接在原始字节里搜索
-  ///      「资产负债率」的 GBK 字节序列来定位数值。
+  /// 新浪 F10 页面是 GBK 编码，用 gbk_codec 正确解码为中文后以中文正则解析：
+  ///   1. 分红页：ASCII 日期统计连续分红年数；列位置取「每10股派息」，
+  ///      结合当前股价自算股息率。
+  ///   2. 财务指标页：直接取预计算好的「资产负债率(%)」「经营现金净流量与
+  ///      净利润的比率(%)」。
+  ///   3. 资产负债表页：取「商誉」「所有者权益合计」算商誉占净资产比例。
   Future<_SinaFinanceResult> _sinaFinanceData(
       String code, String market, {double? price}) async {
     double? debtRatio, cashflowMargin, dividendYield;
@@ -732,7 +738,7 @@ class StockApiService {
     }
 
     // ── 财务指标：vFD_FinancialGuideLine 页含预计算好的比率(%) ─────────────
-    // 该页每个指标是百分比，无需自己算除法；用 GBK 字节序列定位（避免 GBK 解码）
+    // GBK 已正确解码为中文，用可读中文正则解析（比字节偏移可靠）
     double? goodwillRatio;
     try {
       final resp = await _dio.get(
@@ -742,23 +748,18 @@ class StockApiService {
           headers: {'Referer': 'https://finance.sina.com.cn/'},
         ),
       );
-      final bytes = resp.data as List<int>? ?? [];
+      final html = _decodeGbkBytes(resp.data as List<int>? ?? []);
 
-      // 资产负债率(%)：直接是百分数，上限100
-      debtRatio = _numAfterGbkLabel(
-        bytes,
-        const [0xD7, 0xCA, 0xB2, 0xFA, 0xB8, 0xBA, 0xD5, 0xAE, 0xC2, 0xCA],
-        maxValue: 100.0,
-      );
+      // 资产负债率(%)：行首指标名后紧跟最近报告期数值，取第一个（0~100）
+      debtRatio = _firstRatioAfterLabel(html, '资产负债率', min: 0, max: 100);
 
-      // 经营现金净流量与净利润的比率(%)：直接是百分数，可为负
-      cashflowMargin = _numAfterGbkLabel(
-        bytes,
-        const [0xBE, 0xAD, 0xD3, 0xAA, 0xCF, 0xD6, 0xBD, 0xF0, 0xBE, 0xBB,
-               0xC1, 0xF7, 0xC1, 0xBF, 0xD3, 0xEB, 0xBE, 0xBB, 0xC0, 0xFB,
-               0xC8, 0xF3, 0xB5, 0xC4, 0xB1, 0xC8, 0xC2, 0xCA],
-        allowNegative: true,
-        maxValue: 100000,
+      // 经营现金净流量与净利润的比率(%)：可为负
+      cashflowMargin = _firstRatioAfterLabel(
+        html, '经营现金净流量与净利润的比率',
+        min: -100000, max: 100000, allowNegative: true,
+      ) ?? _firstRatioAfterLabel(
+        html, '经营现金净流量对净利润的比率',
+        min: -100000, max: 100000, allowNegative: true,
       );
 
       _log('新浪F10财务指标[$code] 负债率=$debtRatio 现金流比=$cashflowMargin');
@@ -766,7 +767,7 @@ class StockApiService {
       _log('新浪F10财务指标[$code] 异常: $e');
     }
 
-    // ── 商誉/净资产：财务摘要资产负债表页 vFD_BalanceSheet ──────────────────
+    // ── 商誉/净资产：资产负债表页 vFD_BalanceSheet ─────────────────────────
     try {
       final resp = await _dio.get(
         'https://money.finance.sina.com.cn/corp/go.php/vFD_BalanceSheet/stockid/$code/ctrl/part/displaytype/4.phtml',
@@ -775,18 +776,17 @@ class StockApiService {
           headers: {'Referer': 'https://finance.sina.com.cn/'},
         ),
       );
-      final bytes = resp.data as List<int>? ?? [];
-      // 商誉（金额）
-      final goodwill = _numAfterGbkLabel(bytes, const [0xC9, 0xCC, 0xD3, 0xFE]);
-      // 所有者权益合计（金额）
-      final equity = _numAfterGbkLabel(
-        bytes,
-        const [0xCB, 0xF9, 0xD3, 0xD0, 0xD5, 0xDF, 0xC8, 0xA8, 0xD2, 0xE6],
-      );
-      if (goodwill != null && equity != null && equity > 0) {
+      final html = _decodeGbkBytes(resp.data as List<int>? ?? []);
+      // 「商誉」需精确匹配，避免误命中「商誉减值准备」等；后接金额（元）
+      final goodwill = _firstAmountAfterLabel(html, '商誉', excludeSuffix: ['减值']);
+      // 所有者权益(或股东权益)合计
+      final equity = _firstAmountAfterLabel(html, '所有者权益（或股东权益）合计')
+          ?? _firstAmountAfterLabel(html, '所有者权益合计')
+          ?? _firstAmountAfterLabel(html, '股东权益合计');
+      if (goodwill != null && equity != null && equity > 0 && goodwill < equity) {
         goodwillRatio = goodwill / equity * 100;
       }
-      _log('新浪F10资产负债[$code] 商誉占比=$goodwillRatio');
+      _log('新浪F10资产负债[$code] 商誉=$goodwill 净资产=$equity 占比=$goodwillRatio');
     } catch (e) {
       _log('新浪F10资产负债[$code] 异常: $e');
     }
@@ -800,46 +800,46 @@ class StockApiService {
     );
   }
 
-  /// 在原始字节流里定位一段 GBK 标签字节，返回其后出现的第一个「合理」数值。
-  /// 用于 GBK 页面中按确定性字节序列定位中文字段（避免 GBK 解码）。
-  /// [maxValue] 过滤上限；[skipYearLike] 跳过形如 1990~2100 的年份整数；
-  /// [allowNegative] 允许负数（如经营现金流净额可能为负）。
-  double? _numAfterGbkLabel(List<int> bytes, List<int> label,
-      {double maxValue = 1e15, bool skipYearLike = true, bool allowNegative = false}) {
-    if (bytes.isEmpty || label.isEmpty) return null;
-    for (int i = 0; i + label.length < bytes.length; i++) {
-      bool matched = true;
-      for (int j = 0; j < label.length; j++) {
-        if (bytes[i + j] != label[j]) { matched = false; break; }
-      }
-      if (!matched) continue;
-      int k = i + label.length;
-      final end = (k + 400).clamp(0, bytes.length);
-      while (k < end) {
-        final sb = StringBuffer();
-        bool started = false;
-        bool neg = false;
-        for (; k < end; k++) {
-          final b = bytes[k];
-          if (b >= 0x30 && b <= 0x39) { sb.writeCharCode(b); started = true; }
-          else if (b == 0x2E && started) { sb.writeCharCode(b); }
-          else if (b == 0x2D && !started && allowNegative) { neg = true; }
-          else if (started) { break; }
-          else { neg = false; }
-        }
-        if (!started) { k++; continue; }
-        var v = double.tryParse(sb.toString());
-        if (v == null) continue;
-        if (neg) v = -v;
-        final str = sb.toString();
-        if (v.abs() > 0 && v.abs() < maxValue) {
-          final isYearLike = skipYearLike &&
-              !str.contains('.') && v >= 1990 && v <= 2100;
-          if (!isYearLike) return v;
-        }
-      }
+  /// 在已解码 HTML 中定位「指标名(可含%)」后紧跟的第一个百分比数值。
+  double? _firstRatioAfterLabel(String html, String label,
+      {double min = 0, double max = 100, bool allowNegative = false}) {
+    final idx = html.indexOf(label);
+    if (idx < 0) return null;
+    // 从标签之后截取一段窗口，提取第一个数字（可带负号/小数）
+    final window = html.substring(idx + label.length,
+        (idx + label.length + 400).clamp(0, html.length));
+    final numRe = allowNegative
+        ? RegExp(r'(-?\d+\.?\d*)')
+        : RegExp(r'(\d+\.?\d*)');
+    for (final m in numRe.allMatches(window)) {
+      final v = double.tryParse(m.group(1)!);
+      if (v == null) continue;
+      // 跳过年份样整数
+      if (!m.group(1)!.contains('.') && v >= 1990 && v <= 2100) continue;
+      if (v >= min && v <= max && v != 0) return v;
     }
     return null;
+  }
+
+  /// 在已解码 HTML 中定位「指标名」后紧跟的第一个金额（元，可为大数）。
+  /// [excludeSuffix] 若标签后紧跟这些字符则跳过（避免误命中派生科目）。
+  double? _firstAmountAfterLabel(String html, String label,
+      {List<String> excludeSuffix = const []}) {
+    int from = 0;
+    while (true) {
+      final idx = html.indexOf(label, from);
+      if (idx < 0) return null;
+      from = idx + label.length;
+      // 检查排除后缀
+      final after = html.substring(from, (from + 6).clamp(0, html.length));
+      if (excludeSuffix.any((s) => after.startsWith(s))) continue;
+      final window = html.substring(from, (from + 400).clamp(0, html.length));
+      final m = RegExp(r'(-?\d[\d,]*\.?\d*)').firstMatch(window);
+      if (m != null) {
+        final v = double.tryParse(m.group(1)!.replaceAll(',', ''));
+        if (v != null && v.abs() > 0) return v;
+      }
+    }
   }
 
   // ── datacenter 辅助 ───────────────────────────────────────────────────────

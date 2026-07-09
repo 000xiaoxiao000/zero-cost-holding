@@ -18,6 +18,9 @@ dependencies:
   dio: ^5.4.0
   dio_cache_interceptor: ^3.5.0
 
+  # GBK/GB2312 解码（新浪财经 F10 页面为 GBK 编码，Dart 标准库不支持）
+  gbk_codec: ^0.4.0
+
   # 本地数据库
   sqflite: ^2.3.0
   path: ^1.8.3
