@@ -628,15 +628,18 @@ class _AutoFetchCardState extends State<_AutoFetchCard> {
   bool _searching = false;
   OverlayEntry? _ov;
   final _link = LayerLink();
+  int _searchSeq = 0;
 
   Future<void> _onCode(String v) async {
     widget.onChanged();
     _ov?.remove(); _ov = null;
     final t = v.trim();
-    if (t.isEmpty || RegExp(r'^\d+$').hasMatch(t)) { setState(() => _sugg = []); return; }
+    // 代码或名称都触发下拉搜索：东方财富 suggest 接口对两者均支持。
+    if (t.isEmpty) { setState(() { _sugg = []; _searching = false; }); return; }
+    final seq = ++_searchSeq;
     setState(() => _searching = true);
     final r = await StockApiService().searchByName(t);
-    if (!mounted) return;
+    if (!mounted || seq != _searchSeq) return;
     setState(() { _sugg = r; _searching = false; });
     if (r.isNotEmpty) _showOv();
   }

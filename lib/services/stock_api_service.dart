@@ -78,9 +78,14 @@ class StockApiService {
   String _sinaCode(String code, String market) => '${market.toLowerCase()}$code';
   String _emSecid(String code, String market) => '${market == "SH" ? 1 : 0}.$code';
 
+  /// 东方财富数据中心 SECUCODE 后缀：沪 SH / 深 SZ / 北交所 BJ
+  String _secuCode(String code, String market) => '$code.$market';
+
   String _inferMarket(String code) {
+    // 北交所：老代码 43/83/87/88/8x、新代码 920 前缀（需在 '9' 判断之前）
+    if (code.startsWith('92') || code.startsWith('8') ||
+        code.startsWith('43') || code.startsWith('40')) return 'BJ';
     if (code.startsWith('6') || code.startsWith('5') || code.startsWith('9')) return 'SH';
-    if (code.startsWith('8') || code.startsWith('43') || code.startsWith('40')) return 'BJ';
     return 'SZ';
   }
 
@@ -164,20 +169,15 @@ class StockApiService {
 
   /// 优先腾讯sqt → 新浪 → 聚合 → 东方财富；名称由 fetchStockName 兜底
   Future<Stock?> fetchStockQuote(String code, String market) async {
-    Stock? r;
-    r = await _quoteSqt(code, market);
-    if (r != null) { _log('行情[sqt] $code OK'); }
+    var r = await _quoteAllSources(code, market);
+    // 全部源失败：market 可能错（尤其北交所 920xxx 新代码常被误判为 SZ），
+    // 依次尝试其余市场前缀自愈。
     if (r == null) {
-      r = await _quoteSina(code, market);
-      if (r != null) { _log('行情[新浪] $code OK'); }
-    }
-    if (r == null && ApiConfig.hasJuheKey) {
-      r = await _quoteJuhe(code, market);
-      if (r != null) { _log('行情[聚合] $code OK'); }
-    }
-    if (r == null) {
-      r = await _quoteEM(code, market);
-      if (r != null) { _log('行情[EM] $code OK'); }
+      for (final m in const ['BJ', 'SH', 'SZ']) {
+        if (m == market) continue;
+        r = await _quoteAllSources(code, m);
+        if (r != null) { _log('行情 $code 兜底市场 $m 命中（原 $market）'); break; }
+      }
     }
     if (r == null) { _log('行情 $code 全部源失败'); return null; }
     // 名称为空或为 GBK 乱码时，用东方财富 suggest（UTF-8）补查
@@ -186,6 +186,20 @@ class StockApiService {
       if (name.isNotEmpty) r = r.copyWith(name: name);
     }
     return r;
+  }
+
+  Future<Stock?> _quoteAllSources(String code, String market) async {
+    Stock? r = await _quoteSqt(code, market);
+    if (r != null) { _log('行情[sqt] $code($market) OK'); return r; }
+    r = await _quoteSina(code, market);
+    if (r != null) { _log('行情[新浪] $code($market) OK'); return r; }
+    if (ApiConfig.hasJuheKey) {
+      r = await _quoteJuhe(code, market);
+      if (r != null) { _log('行情[聚合] $code($market) OK'); return r; }
+    }
+    r = await _quoteEM(code, market);
+    if (r != null) { _log('行情[EM] $code($market) OK'); return r; }
+    return null;
   }
 
   Future<Stock?> _quoteSqt(String code, String market) async {
@@ -460,7 +474,13 @@ class StockApiService {
         final type = e['SecurityType']?.toString() ?? '';
         final classify = e['Classify']?.toString() ?? '';
         final String market;
-        if (mktNum == '2' || type == '77' || type == '78') {
+        // 北交所优先：新代码 920/老代码 43/83/87/88 前缀，
+        // 东方财富 suggest 对北交所常返回 MktNum=0（与深圳同组），
+        // 故必须先按代码前缀判定，否则会被误判为 SZ。
+        if (mktNum == '2' || type == '77' || type == '78' ||
+            code.startsWith('92') || code.startsWith('43') ||
+            code.startsWith('83') || code.startsWith('87') ||
+            code.startsWith('88')) {
           market = 'BJ';
         } else if (mktNum == '1' || type == '1') {
           market = 'SH';
@@ -556,7 +576,7 @@ class StockApiService {
 
     if (divYears == null || divYield == null) {
       try {
-        final secuCode = '$code.${market == "SH" ? "SH" : "SZ"}';
+        final secuCode = _secuCode(code, market);
         final rows = await _fetchFirstReport(
           reportNames: const ['RPT_FUND_BONUS', 'RPT_F10_FUND_DIVIDEND'],
           filters: ['(FUND_CODE="$code")', '(SECUCODE="$secuCode")'],
@@ -598,7 +618,7 @@ class StockApiService {
 
   Future<AutoRiskData> fetchAutoRiskData(String code, String market, {double? price}) async {
     if (_isFundCode(code)) return _fetchFundRiskData(code, market);
-    final secuCode = '$code.${market == "SH" ? "SH" : "SZ"}';
+    final secuCode = _secuCode(code, market);
     final notes = <String>[];
 
     final results = await Future.wait<dynamic>([
@@ -923,57 +943,134 @@ class StockApiService {
     return [];
   }
 
-  /// 大股东质押率：东方财富 F10 专用子域（emweb），返回 UTF-8 JSON。
-  /// 该域名与 datacenter 不同，datacenter 被挡时可能仍可达。
+  /// 大股东质押率：东方财富 F10 股权质押接口（emweb 子域），返回 UTF-8 JSON。
+  /// 关键：PageAjax 接口必须带 `X-Requested-With: XMLHttpRequest` 头，
+  /// 否则东方财富会返回整张 HTML 页面而非 JSON。
   /// 返回值语义：
-  ///   - >0：命中质押比例
-  ///   - 0.0：数据源可达且明确无质押（如国资控股股票），视为健康
-  ///   - null：所有源均不可达/无有效响应，无法判断
+  ///   - >=0：命中质押数据（含明确的 0% 无质押）
+  ///   - null：所有源均不可达或未返回可识别的质押数据，无法判断（显示「—」）
   Future<double?> _fetchPledgeRatioEm(String code, String market) async {
-    final secid = market == 'SH' ? 'SH$code' : 'SZ$code';
-    bool anyReachable = false;
+    final secid = '$market$code';
+    // 优先尝试 datacenter 的股权质押专用报表（个股维度，返回 JSON）
+    final dc = await _fetchPledgeFromGpzy(code);
+    if (dc != null) return dc;
+
     for (final url in [
       'https://emweb.securities.eastmoney.com/PC_HSF10/EquityPledge/PageAjax?code=$secid',
       'https://emweb.eastmoney.com/PC_HSF10/EquityPledge/PageAjax?code=$secid',
-      'https://emweb.securities.eastmoney.com/PC_HSF10/OperationsRequired/PageAjax?code=$secid',
     ]) {
       try {
         final resp = await _dio.get(
           url,
           options: Options(
             responseType: ResponseType.plain,
-            headers: {'Referer': 'https://emweb.securities.eastmoney.com/'},
+            headers: {
+              'Referer': 'https://emweb.securities.eastmoney.com/pc_hsf10/pages/index.html?type=web&code=$secid',
+              'X-Requested-With': 'XMLHttpRequest',
+              'Accept': 'application/json, text/javascript, */*; q=0.01',
+            },
           ),
         );
         final raw = resp.data?.toString() ?? '';
-        if (raw.isEmpty) { _log('质押率[$code] emweb 空响应: $url'); continue; }
+        if (raw.isEmpty) { _log('质押率[$code] emweb 空响应'); continue; }
         final trimmed = raw.trimLeft();
-        if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) {
-          _log('质押率[$code] emweb 非JSON(前40字符)=${raw.substring(0, raw.length.clamp(0, 40))}');
-          continue;
-        }
-        final decoded = jsonDecode(raw);
-        anyReachable = true;
-        final v = _findPledgeRatio(decoded);
-        if (v != null) {
-          _log('质押率[$code] emweb F10 命中=$v%');
-          return v;
+        if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+          final decoded = jsonDecode(raw);
+          final r = _extractPledgeFromEmF10(decoded);
+          if (r != null) { _log('质押率[$code] emweb F10 JSON 命中=$r%'); return r; }
+          _log('质押率[$code] emweb JSON 未定位字段，keys=${decoded is Map ? decoded.keys.toList() : "list"}');
+        } else {
+          // 返回的是 HTML：从中提取「质押」附近的百分比，或内嵌 JSON 数据
+          final r = _pledgeFromHtml(raw);
+          if (r != null) { _log('质押率[$code] emweb HTML 提取=$r%'); return r; }
+          _log('质押率[$code] emweb HTML 未定位质押值(前200)=${raw.substring(0, raw.length.clamp(0, 200))}');
         }
       } catch (e) {
         _log('质押率[$code] emweb 异常: $e');
       }
     }
-    // 数据源可达但无质押比例字段 → 明确无质押，返回 0
-    if (anyReachable) {
-      _log('质押率[$code] emweb 可达但无质押记录，判定为 0%（无质押）');
-      return 0.0;
+    return null;
+  }
+
+  /// 东方财富数据中心「股权质押·个股质押比例」接口（RPT_CSDC_LIST 等），返回 JSON。
+  Future<double?> _fetchPledgeFromGpzy(String code) async {
+    for (final rn in const [
+      'RPT_CSDC_LIST',
+      'RPT_CUSTOM_STOCK_PLEDGE_STATISTICS',
+      'RPT_STOCK_PLEDGE_STATISTICS',
+    ]) {
+      try {
+        final resp = await _dio.get(
+          ApiConfig.emDatacenterBase,
+          queryParameters: {
+            'sortColumns': 'TRADE_DATE', 'sortTypes': '-1',
+            'pageSize': 1, 'pageNumber': 1,
+            'reportName': rn, 'columns': 'ALL',
+            'source': 'WEB', 'client': 'WEB',
+            'filter': '(SECURITY_CODE="$code")',
+          },
+          options: Options(
+            responseType: ResponseType.plain,
+            headers: {
+              'Referer': 'https://data.eastmoney.com/gpzy/',
+              'Origin': 'https://data.eastmoney.com',
+            },
+          ),
+        );
+        final raw = resp.data?.toString() ?? '';
+        if (raw.isEmpty || !raw.trimLeft().startsWith('{')) continue;
+        final decoded = jsonDecode(raw);
+        final data = (decoded is Map ? decoded['result'] : null);
+        final rows = (data is Map ? data['data'] : null);
+        if (rows is! List || rows.isEmpty) continue;
+        final v = _findPledgeRatio(rows.first);
+        if (v != null) { _log('质押率[$code] gpzy[$rn] 命中=$v%'); return v; }
+      } catch (e) {
+        _log('质押率[$code] gpzy[$rn] 异常: $e');
+      }
     }
     return null;
   }
 
+  /// 从 HTML 文本中提取质押比例：优先匹配「质押…百分比」，其次内嵌 JSON。
+  double? _pledgeFromHtml(String html) {
+    // 内嵌 JSON 字段
+    for (final key in const ['zgpl', 'zybl', 'zzgszszb', 'pledge_ratio']) {
+      final m = RegExp('"$key"\\s*:\\s*"?(-?\\d+\\.?\\d*)', caseSensitive: false)
+          .firstMatch(html);
+      if (m != null) {
+        final v = double.tryParse(m.group(1)!);
+        if (v != null && v > 0 && v <= 100) return v;
+      }
+    }
+    // 文本形式：「(整体/累计)质押比例 12.34%」「质押股份占总股本 12.34%」
+    for (final pat in [
+      RegExp(r'质押比例[^\d%]{0,10}(\d+\.?\d*)\s*%'),
+      RegExp(r'质押股份?占总股本[^\d%]{0,10}(\d+\.?\d*)\s*%'),
+      RegExp(r'占总股本比?例?[^\d%]{0,10}(\d+\.?\d*)\s*%'),
+    ]) {
+      final m = pat.firstMatch(html);
+      if (m != null) {
+        final v = double.tryParse(m.group(1)!);
+        if (v != null && v > 0 && v <= 100) return v;
+      }
+    }
+    return null;
+  }
+
+  /// 从东方财富 F10 EquityPledge 接口 JSON 中提取最新一期质押比例。
+  /// 接口质押比例常见字段：zgpl（占总股本比例）、zybl（质押比例）。
+  double? _extractPledgeFromEmF10(dynamic decoded) {
+    return _findPledgeRatio(decoded);
+  }
+
   /// 在 emweb 返回的嵌套 JSON 中递归查找「质押比例」类字段（0~100 的百分比）。
+  /// ZGPL=占总股本比例、ZYBL=质押比例、ZZGSZSZB=占总股本市值比。
   double? _findPledgeRatio(dynamic node) {
-    const keyHints = ['ZYBL', 'ZZGSZSZB', 'PLEDGE_RATIO', 'ZYGSZB', 'ZYBLTOTAL'];
+    const keyHints = [
+      'ZGPL', 'ZYBL', 'ZZGSZSZB', 'PLEDGE_RATIO', 'ZYGSZB', 'ZYBLTOTAL',
+      'ZLZGBBL', 'PLEDGENUMRATIO',
+    ];
     if (node is Map) {
       // 先在本层按 key 命中
       for (final entry in node.entries) {
@@ -1148,7 +1245,7 @@ class StockApiService {
 
     // 降级：datacenter-web
     try {
-      final secuCode = '$code.${market == "SH" ? "SH" : "SZ"}';
+      final secuCode = _secuCode(code, market);
       final allRows = <Map<String, dynamic>>[];
       for (final rn in const ['RPT_F10_PEandPB', 'RPT_VALUATION_HISTORY']) {
         for (final f in ['(SECUCODE="$secuCode")', '(SECURITY_CODE="$code")']) {
