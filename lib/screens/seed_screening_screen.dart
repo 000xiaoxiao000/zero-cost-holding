@@ -1269,7 +1269,7 @@ class _SwitchRow extends StatelessWidget {
           )),
           Text(desc, style: const TextStyle(color: AppTheme.textMuted, fontSize: 11, height: 1.3)),
         ])),
-        Switch(value: value, onChanged: onChanged, activeColor: AppTheme.riskRed),
+        Switch(value: value, onChanged: onChanged, activeThumbColor: AppTheme.riskRed),
       ]),
     );
   }

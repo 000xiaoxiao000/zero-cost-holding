@@ -20,14 +20,12 @@ class _SinaFinanceResult {
   final double? debtRatio;
   final double? cashflowMargin;
   final double? goodwillRatio;
-  final double? pledgeRatio;
   final double? dividendYield;
   final int dividendYears;
   const _SinaFinanceResult({
     this.debtRatio,
     this.cashflowMargin,
     this.goodwillRatio,
-    this.pledgeRatio,
     this.dividendYield,
     this.dividendYears = 0,
   });
@@ -160,7 +158,7 @@ class StockApiService {
       final raw = resp.data;
       Map<String, dynamic> data;
       if (raw is Map) {
-        data = Map<String, dynamic>.from(raw as Map);
+        data = Map<String, dynamic>.from(raw);
       } else {
         final str = raw.toString().trim();
         if (str.startsWith('<')) return '';
@@ -504,7 +502,7 @@ class StockApiService {
       if (raw == null) return [];
       Map<String, dynamic> data;
       if (raw is Map) {
-        data = Map<String, dynamic>.from(raw as Map);
+        data = Map<String, dynamic>.from(raw);
       } else {
         final str = raw.toString().trim();
         if (str.startsWith('<')) { _log('搜索[EM][$keyword] 返回HTML'); return []; }
@@ -1181,14 +1179,14 @@ class StockApiService {
       if (result is! Map) return [];
       final data = result['data'];
       if (data is! List) {
-        _log('datacenter[$reportName] 无数据, result keys=${(result as Map).keys.toList()}');
+        _log('datacenter[$reportName] 无数据, result keys=${result.keys.toList()}');
         return [];
       }
       return data
           .whereType<Map>()
           .map<Map<String, dynamic>>(
             (e) => Map<String, dynamic>.fromEntries(
-              (e as Map).entries.map((en) => MapEntry(en.key.toString(), en.value)),
+              e.entries.map((en) => MapEntry(en.key.toString(), en.value)),
             ),
           )
           .toList();
@@ -1683,7 +1681,7 @@ class StockApiService {
               if (data is! List || data.isEmpty) continue;
               allRows.addAll(data.whereType<Map>().map<Map<String, dynamic>>(
                 (e) => Map<String, dynamic>.fromEntries(
-                  (e as Map).entries.map((en) => MapEntry(en.key.toString(), en.value)),
+                  e.entries.map((en) => MapEntry(en.key.toString(), en.value)),
                 ),
               ));
             } catch (_) {}

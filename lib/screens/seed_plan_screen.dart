@@ -1577,7 +1577,7 @@ class _DcaForm extends StatelessWidget {
               Switch(
                 value: usePriceLimit,
                 onChanged: onUsePriceLimitChanged,
-                activeColor: AppTheme.primaryGreen,
+                activeThumbColor: AppTheme.primaryGreen,
                 materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
               ),
               const SizedBox(width: 8),
