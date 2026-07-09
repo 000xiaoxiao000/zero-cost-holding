@@ -32,7 +32,7 @@ class HoldingBatch {
 
   double get totalCost => buyPrice * quantity + commission;
 
-  double get avgCost => totalCost / quantity;
+  double get avgCost => quantity > 0 ? totalCost / quantity : 0.0;
 
   bool get isFund => assetType == 'fund';
 

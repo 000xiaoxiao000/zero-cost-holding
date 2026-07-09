@@ -9,6 +9,12 @@ import 'api_config.dart';
 
 // ── 辅助数据类（顶层，供类内方法引用） ────────────────────────────────────────
 
+class _KlineCacheEntry {
+  final List<Map<String, dynamic>> data;
+  final DateTime fetchedAt;
+  const _KlineCacheEntry({required this.data, required this.fetchedAt});
+}
+
 class _SinaFinanceResult {
   final double? debtRatio;
   final double? cashflowMargin;
@@ -278,7 +284,8 @@ class StockApiService {
         high: double.tryParse(p[4]) ?? 0.0,
         low: double.tryParse(p[5]) ?? 0.0,
         preClose: preClose,
-        volume: (double.tryParse(p[8]) ?? 0.0) * 100,
+        // 新浪 list 接口成交量单位为「股」，无需 ×100（腾讯 sqt 为「手」才需换算）
+        volume: double.tryParse(p[8]) ?? 0.0,
         turnover: double.tryParse(p[9]) ?? 0.0,
       );
     } catch (_) { return null; }
@@ -387,12 +394,32 @@ class StockApiService {
 
   // ── 历史K线 ───────────────────────────────────────────────────────────────
 
+  /// 日K线内存缓存：同一标的在排雷、ATR、吊灯高点三处会被重复请求，
+  /// 短 TTL 缓存可避免一次操作内的重复网络拉取。缓存按需求的最大窗口存储，
+  /// 更小窗口的请求直接从尾部截取。
+  final Map<String, _KlineCacheEntry> _klineCache = {};
+  static const _klineCacheTtl = Duration(minutes: 5);
+
   /// 腾讯K线主源 → 新浪备用，不使用东方财富push域名
   Future<List<Map<String, dynamic>>> fetchKlineDaily(
       String code, String market, {int limit = 120}) async {
+    final key = _sinaCode(code, market);
+    final cached = _klineCache[key];
+    final now = DateTime.now();
+    if (cached != null &&
+        now.difference(cached.fetchedAt) < _klineCacheTtl &&
+        cached.data.length >= limit) {
+      // 命中且样本足够：从尾部截取所需长度（保留最新 limit 根）
+      final data = cached.data;
+      return data.length > limit ? data.sublist(data.length - limit) : data;
+    }
+
     final r = await _klineQQ(code, market, limit: limit);
-    if (r.isNotEmpty) return r;
-    return _klineSina(code, market, limit: limit);
+    final result = r.isNotEmpty ? r : await _klineSina(code, market, limit: limit);
+    if (result.isNotEmpty) {
+      _klineCache[key] = _KlineCacheEntry(data: result, fetchedAt: now);
+    }
+    return result;
   }
 
   Future<List<Map<String, dynamic>>> _klineQQ(
@@ -738,30 +765,58 @@ class StockApiService {
   ///   2. 财务指标页：直接取预计算好的「资产负债率(%)」「经营现金净流量与
   ///      净利润的比率(%)」。
   ///   3. 资产负债表页：取「商誉」「所有者权益合计」算商誉占净资产比例。
-  Future<_SinaFinanceResult> _sinaFinanceData(
-      String code, String market, {double? price}) async {
-    double? debtRatio, cashflowMargin, dividendYield;
-    int dividendYears = 0;
-
-    // 股息率自算需要股价；调用方未传时自行拉取一次实时行情
-    double? px = price;
-    if (px == null || px <= 0) {
-      try {
-        final q = await _quoteSqt(code, market);
-        px = q?.price;
-      } catch (_) {}
-    }
-
-    // ── 分红历史：连续分红年数 + 每股派息 → 自算股息率 ──────────────────────
+  /// 拉取新浪 F10 页面并解码为字符串（GBK）。失败返回空串，供并行调用。
+  Future<String> _getSinaHtml(String url) async {
     try {
       final resp = await _dio.get(
-        'https://money.finance.sina.com.cn/corp/go.php/vISSUE_ShareBonus/stockid/$code.phtml',
+        url,
         options: Options(
           responseType: ResponseType.bytes,
           headers: {'Referer': 'https://finance.sina.com.cn/'},
         ),
       );
-      final body = _decodeGbkBytes(resp.data as List<int>? ?? []);
+      return _decodeGbkBytes(resp.data as List<int>? ?? []);
+    } catch (_) {
+      return '';
+    }
+  }
+
+  /// 解析股价：调用方已提供则直接用，否则拉一次实时行情。
+  Future<double?> _resolvePrice(String code, String market, double? price) async {
+    if (price != null && price > 0) return price;
+    try {
+      final q = await _quoteSqt(code, market);
+      return q?.price;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<_SinaFinanceResult> _sinaFinanceData(
+      String code, String market, {double? price}) async {
+    double? debtRatio, cashflowMargin, dividendYield;
+    int dividendYears = 0;
+    double? goodwillRatio;
+
+    // 股价 + 分红页 + 财务指标页 + 资产负债表页彼此独立，并行拉取后再解析，
+    // 避免此前逐页 await 造成的串行等待（排雷主要耗时来源）。
+    final fetched = await Future.wait<dynamic>([
+      _resolvePrice(code, market, price),
+      _getSinaHtml(
+          'https://money.finance.sina.com.cn/corp/go.php/vISSUE_ShareBonus/stockid/$code.phtml'),
+      _getSinaHtml(
+          'https://money.finance.sina.com.cn/corp/go.php/vFD_FinancialGuideLine/stockid/$code/ctrl/all/displaytype/4.phtml'),
+      _getSinaHtml(
+          'https://money.finance.sina.com.cn/corp/go.php/vFD_BalanceSheet/stockid/$code/ctrl/part/displaytype/4.phtml'),
+    ]);
+    final double? px = fetched[0] as double?;
+    final String divBody = fetched[1] as String;
+    final String finHtml = fetched[2] as String;
+    final String balHtml = fetched[3] as String;
+
+    // ── 分红历史：连续分红年数 + 每股派息 → 自算股息率 ──────────────────────
+    if (divBody.isNotEmpty) {
+      final body = divBody;
 
       // 新浪分红表列顺序：公告日期 | 分红年度 | 送股 | 转增 | 派息(每10股,元) | ...
       // 含短横线的日期 td 不会匹配纯数字正则，故行内「纯数字 td」按序为：
@@ -799,85 +854,55 @@ class StockApiService {
         dividendYield = latestPerShareDiv / px * 100;
       }
       _log('新浪F10分红[$code] 连续${dividendYears}年 每股派息=$latestPerShareDiv 股息率=$dividendYield');
-    } catch (e) {
-      _log('新浪F10分红[$code] 异常: $e');
     }
 
     // ── 财务指标：优先财务指标页取预计算比率；失败则从报表自算 ─────────────
-    double? goodwillRatio;
-    try {
-      final resp = await _dio.get(
-        'https://money.finance.sina.com.cn/corp/go.php/vFD_FinancialGuideLine/stockid/$code/ctrl/all/displaytype/4.phtml',
-        options: Options(
-          responseType: ResponseType.bytes,
-          headers: {'Referer': 'https://finance.sina.com.cn/'},
-        ),
-      );
-      final html = _decodeGbkBytes(resp.data as List<int>? ?? []);
-      debtRatio = _firstRatioAfterLabel(html, '资产负债率', min: 0, max: 100);
+    if (finHtml.isNotEmpty) {
+      debtRatio = _firstRatioAfterLabel(finHtml, '资产负债率', min: 0, max: 100);
       cashflowMargin = _firstRatioAfterLabel(
-        html, '经营现金净流量与净利润的比率',
+        finHtml, '经营现金净流量与净利润的比率',
         min: -100000, max: 100000, allowNegative: true,
       ) ?? _firstRatioAfterLabel(
-        html, '经营现金净流量对净利润的比率',
+        finHtml, '经营现金净流量对净利润的比率',
         min: -100000, max: 100000, allowNegative: true,
       );
       _log('新浪F10财务指标[$code] 负债率=$debtRatio 现金流比=$cashflowMargin');
-    } catch (e) {
-      _log('新浪F10财务指标[$code] 异常: $e');
     }
 
     // ── 资产负债表：商誉/净资产 + 负债率兜底自算 ───────────────────────────
-    try {
-      final resp = await _dio.get(
-        'https://money.finance.sina.com.cn/corp/go.php/vFD_BalanceSheet/stockid/$code/ctrl/part/displaytype/4.phtml',
-        options: Options(
-          responseType: ResponseType.bytes,
-          headers: {'Referer': 'https://finance.sina.com.cn/'},
-        ),
-      );
-      final html = _decodeGbkBytes(resp.data as List<int>? ?? []);
+    if (balHtml.isNotEmpty) {
       // 商誉（精确匹配，排除「商誉减值」）
-      final goodwill = _firstAmountAfterLabel(html, '商誉', excludeSuffix: ['减值']);
+      final goodwill = _firstAmountAfterLabel(balHtml, '商誉', excludeSuffix: ['减值']);
       // 所有者权益(或股东权益)合计
-      final equity = _firstAmountAfterLabel(html, '所有者权益（或股东权益）合计')
-          ?? _firstAmountAfterLabel(html, '所有者权益合计')
-          ?? _firstAmountAfterLabel(html, '股东权益合计');
+      final equity = _firstAmountAfterLabel(balHtml, '所有者权益（或股东权益）合计')
+          ?? _firstAmountAfterLabel(balHtml, '所有者权益合计')
+          ?? _firstAmountAfterLabel(balHtml, '股东权益合计');
       if (goodwill != null && equity != null && equity > 0 && goodwill < equity) {
         goodwillRatio = goodwill / equity * 100;
       }
       // 负债率兜底：负债合计 / 资产总计 * 100（词边界避免命中「流动负债合计」）
       if (debtRatio == null) {
-        final totalLiab = _firstAmountAfterLabel(html, '负债合计', wordBoundary: true);
-        final totalAsset = _firstAmountAfterLabel(html, '资产总计', wordBoundary: true);
+        final totalLiab = _firstAmountAfterLabel(balHtml, '负债合计', wordBoundary: true);
+        final totalAsset = _firstAmountAfterLabel(balHtml, '资产总计', wordBoundary: true);
         if (totalLiab != null && totalAsset != null && totalAsset > 0) {
           debtRatio = totalLiab / totalAsset * 100;
         }
       }
       _log('新浪F10资产负债[$code] 商誉=$goodwill 净资产=$equity 占比=$goodwillRatio 负债率=$debtRatio');
-    } catch (e) {
-      _log('新浪F10资产负债[$code] 异常: $e');
     }
 
     // ── 现金流比兜底：经营现金流净额 / 净利润 * 100 ────────────────────────
     if (cashflowMargin == null) {
-      try {
-        final resp = await _dio.get(
-          'https://money.finance.sina.com.cn/corp/go.php/vFD_CashFlow/stockid/$code/ctrl/part/displaytype/4.phtml',
-          options: Options(
-            responseType: ResponseType.bytes,
-            headers: {'Referer': 'https://finance.sina.com.cn/'},
-          ),
-        );
-        final html = _decodeGbkBytes(resp.data as List<int>? ?? []);
+      final html = await _getSinaHtml(
+        'https://money.finance.sina.com.cn/corp/go.php/vFD_CashFlow/stockid/$code/ctrl/part/displaytype/4.phtml',
+      );
+      if (html.isNotEmpty) {
         final opCash = _firstAmountAfterLabel(html, '经营活动产生的现金流量净额');
         final netProfit = _firstAmountAfterLabel(html, '净利润', wordBoundary: true);
         if (opCash != null && netProfit != null && netProfit != 0) {
           cashflowMargin = opCash / netProfit * 100;
         }
         _log('新浪F10现金流[$code] 经营现金=$opCash 净利润=$netProfit 现金流比=$cashflowMargin');
-      } catch (e) {
-        _log('新浪F10现金流[$code] 异常: $e');
       }
     }
 
@@ -1326,23 +1351,7 @@ class StockApiService {
     return (pePercentile: null, pbPercentile: null);
   }
 
-  // ── ATR 计算 ──────────────────────────────────────────────────────────────
-
-  double? calculateATR(List<Map<String, dynamic>> klines, {int period = 14}) {
-    if (klines.length < period + 1) return null;
-    final recent = klines.sublist(klines.length - (period + 1));
-    final trs = <double>[];
-    for (int i = 1; i < recent.length; i++) {
-      final high = _n(recent[i]['high']) ?? 0.0;
-      final low = _n(recent[i]['low']) ?? 0.0;
-      final prevClose = _n(recent[i - 1]['close']) ?? 0.0;
-      if (high <= 0 || prevClose <= 0) continue;
-      trs.add([high - low, (high - prevClose).abs(), (low - prevClose).abs()]
-          .reduce((a, b) => a > b ? a : b));
-    }
-    if (trs.isEmpty) return null;
-    return trs.reduce((a, b) => a + b) / trs.length;
-  }
+  // ── 估值百分位辅助 ────────────────────────────────────────────────────────
 
   int? _percentileOf(List<double> series, double? value) {
     if (series.isEmpty || value == null) return null;

@@ -94,19 +94,42 @@ class StockSearchNotifier extends StateNotifier<List<Stock>> {
   StockSearchNotifier() : super([]);
 
   bool isLoading = false;
+  Timer? _debounce;
+  int _seq = 0;
 
-  Future<void> search(String keyword) async {
-    if (keyword.trim().isEmpty) {
+  /// 防抖搜索：连续输入时仅在停顿 350ms 后发起一次网络请求，
+  /// 并用序号丢弃过期响应，避免快慢请求乱序覆盖结果。
+  void search(String keyword) {
+    _debounce?.cancel();
+    final kw = keyword.trim();
+    if (kw.isEmpty) {
+      isLoading = false;
       state = [];
       return;
     }
+    _debounce = Timer(const Duration(milliseconds: 350), () => _run(kw));
+  }
+
+  Future<void> _run(String keyword) async {
+    final seq = ++_seq;
     isLoading = true;
     final results = await StockApiService().searchByName(keyword);
+    if (seq != _seq) return;
     isLoading = false;
     state = results;
   }
 
-  void clear() => state = [];
+  void clear() {
+    _debounce?.cancel();
+    _seq++;
+    state = [];
+  }
+
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    super.dispose();
+  }
 }
 
 final stockSearchProvider =
