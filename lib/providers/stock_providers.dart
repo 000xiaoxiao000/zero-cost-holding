@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/watchlist.dart';
 import '../models/stock.dart';
+import '../models/dividend_financing.dart';
 import '../database/database_helper.dart';
 import '../services/stock_api_service.dart';
 import '../services/alert_polling_service.dart';
@@ -148,6 +149,13 @@ final stockQuoteProvider =
 final klineProvider = FutureProvider.autoDispose
     .family<List<Map<String, dynamic>>, (String, String)>((ref, args) {
   return StockApiService().fetchKlineDaily(args.$1, args.$2);
+});
+
+// ── 分红 & 融资 Provider ──────────────────────────────────────────────────────
+
+final dividendFinancingProvider = FutureProvider.autoDispose
+    .family<DividendFinancingData, (String, String)>((ref, args) {
+  return StockApiService().fetchDividendFinancing(args.$1, args.$2);
 });
 
 // ── 北向资金 Provider ─────────────────────────────────────────────────────────

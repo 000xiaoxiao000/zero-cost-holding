@@ -5,6 +5,7 @@ import 'package:dio/dio.dart';
 import 'package:gbk_codec/gbk_codec.dart';
 import '../models/stock.dart';
 import '../models/watchlist.dart';
+import '../models/dividend_financing.dart';
 import 'api_config.dart';
 
 // ── 辅助数据类（顶层，供类内方法引用） ────────────────────────────────────────
@@ -86,6 +87,9 @@ class StockApiService {
 
   /// 东方财富数据中心 SECUCODE 后缀：沪 SH / 深 SZ / 北交所 BJ
   String _secuCode(String code, String market) => '$code.$market';
+
+  /// 东方财富 F10（emweb）前缀代码：SH600519 / SZ300339 / BJ...
+  String _emPrefixCode(String code, String market) => '$market$code';
 
   String _inferMarket(String code) {
     // 北交所：老代码 43/83/87/88/8x、新代码 920 前缀（需在 '9' 判断之前）
@@ -1256,6 +1260,307 @@ class StockApiService {
     return years.length;
   }
 
+  // ── 分红 & 融资汇总（估值参考下方展示）────────────────────────────────────
+
+  /// 拉取个股分红送转 + 融资历史。数据源：东方财富 F10「分红融资」
+  /// (emweb BonusFinancing/PageAjax) —— 含 fhyx(分红方案)、lnfhrz(历年分红融资
+  /// 汇总)、zfmx(增发明细)、pgmx(配股明细)；首发募资取 RPT_PCF10_ORG_ISSUEINFO。
+  /// 基金无融资维度，走 _fetchFundDividend。
+  Future<DividendFinancingData> fetchDividendFinancing(
+      String code, String market, {double? price}) async {
+    if (_isFundCode(code)) {
+      return _fetchFundDividend(code, market, price: price);
+    }
+    final notes = <String>[];
+    final prefixed = _emPrefixCode(code, market); // 如 SZ300339 / SH600519
+    final secuCode = _secuCode(code, market);     // 如 300339.SZ
+
+    final fetched = await Future.wait<dynamic>([
+      _quoteSqt(code, market),
+      _bonusFinancingAjax(prefixed),
+      _fetchFirstReport(
+        reportNames: const ['RPT_PCF10_ORG_ISSUEINFO'],
+        filters: ['(SECUCODE="$secuCode")'],
+        sortColumns: '',
+        pageSize: 1,
+      ),
+    ]);
+
+    final q = fetched[0] as Stock?;
+    final bf = fetched[1] as Map<String, dynamic>;
+    final ipoRows = fetched[2] as List<Map<String, dynamic>>;
+
+    final px = (price != null && price > 0) ? price : (q?.price ?? 0);
+
+    final fhyx = (bf['fhyx'] as List?) ?? const [];
+    final lnfhrz = (bf['lnfhrz'] as List?) ?? const [];
+    final zfmx = (bf['zfmx'] as List?) ?? const [];
+    final pgmx = (bf['pgmx'] as List?) ?? const [];
+
+    // ── 分红送转记录（fhyx：只保留实施方案的现金分红）──────────────────────
+    final records = <DividendRecord>[];
+    for (final e in fhyx.whereType<Map>()) {
+      final profile = (e['IMPL_PLAN_PROFILE'] ?? '').toString();
+      final ex = (e['EX_DIVIDEND_DATE'] ?? '').toString();
+      final reg = (e['EQUITY_RECORD_DATE'] ?? '').toString();
+      final progress = (e['ASSIGN_PROGRESS'] ?? '').toString();
+      // 只统计已实施且含现金派息的方案
+      final cash = _cashFromProfile(profile);
+      records.add(DividendRecord(
+        reportPeriod: _reportPeriodFromDate(
+            (e['EX_DIVIDEND_DATE'] ?? e['NOTICE_DATE'] ?? '').toString()),
+        plan: progress.isNotEmpty && progress != '实施方案'
+            ? '$profile（$progress）'
+            : profile,
+        recordDate: _fmtDate(reg),
+        exDate: _fmtDate(ex),
+        cashPer10: (progress == '实施方案' && ex.isNotEmpty) ? cash : 0,
+      ));
+    }
+    final dividendCount = records.where((e) => e.cashPer10 > 0).length;
+
+    // ── 累计派现：lnfhrz 逐年 TOTAL_DIVIDEND 求和（权威口径）──────────────
+    double dividendTotal = 0;
+    for (final e in lnfhrz.whereType<Map>()) {
+      dividendTotal += _n(e['TOTAL_DIVIDEND']) ?? 0;
+    }
+
+    // ── 融资：增发(zfmx) + 配股(pgmx) + 首发(issueinfo) ────────────────────
+    final financingRecords = <FinancingRecord>[];
+    double refinanceTotal = 0;
+    for (final e in zfmx.whereType<Map>()) {
+      final amt = _n(e['NET_RAISE_FUNDS']) ?? 0;
+      if (amt <= 0) continue;
+      refinanceTotal += amt;
+      financingRecords.add(FinancingRecord(
+        date: _fmtDate((e['NOTICE_DATE'] ?? '').toString()),
+        type: '增发',
+        amount: amt,
+        shares: _n(e['ISSUE_NUM']),
+        price: _n(e['ISSUE_PRICE']),
+      ));
+    }
+    for (final e in pgmx.whereType<Map>()) {
+      final amt = _n(e['NET_RAISE_FUNDS']) ?? _n(e['TOTAL_RAISE_FUNDS']) ?? 0;
+      if (amt <= 0) continue;
+      refinanceTotal += amt;
+      financingRecords.add(FinancingRecord(
+        date: _fmtDate((e['NOTICE_DATE'] ?? '').toString()),
+        type: '配股',
+        amount: amt,
+        shares: _n(e['ISSUE_NUM']),
+        price: _n(e['ISSUE_PRICE']),
+      ));
+    }
+    double? ipoTotal;
+    if (ipoRows.isNotEmpty) {
+      final r = ipoRows.first;
+      ipoTotal = _n(r['TOTAL_FUNDS']) ?? _n(r['NET_RAISE_FUNDS']);
+      if (ipoTotal != null && ipoTotal > 0) {
+        financingRecords.add(FinancingRecord(
+          date: _fmtDate((r['LISTING_DATE'] ?? '').toString()),
+          type: '首发',
+          amount: ipoTotal,
+          shares: _n(r['TOTAL_ISSUE_NUM']),
+          price: _n(r['ISSUE_PRICE']),
+        ));
+      }
+    }
+    financingRecords.sort((a, b) => b.date.compareTo(a.date));
+    final financingTotal =
+        refinanceTotal + ((ipoTotal != null && ipoTotal > 0) ? ipoTotal : 0);
+    final financingCount = financingRecords.length;
+
+    // ── 股息率：最近实施方案每股派息 / 股价 ────────────────────────────────
+    double? dividendYield;
+    final latestCash = records
+        .firstWhere((e) => e.cashPer10 > 0,
+            orElse: () => const DividendRecord(
+                reportPeriod: '', plan: '', recordDate: '', exDate: ''))
+        .cashPer10;
+    if (px > 0 && latestCash > 0) {
+      dividendYield = latestCash / 10.0 / px * 100;
+    }
+
+    // ── 股利支付率：最近年度 TOTAL_DIVIDEND / 归母净利润 × 100 ─────────────
+    double? payoutRatio = _derivePayoutFromLnfhrz(lnfhrz, q, px);
+
+    // ── 派现融资比 = 累计派现 / 累计融资 × 100 ─────────────────────────────
+    double? divFinRatio;
+    if (financingTotal > 0 && dividendTotal > 0) {
+      divFinRatio = dividendTotal / financingTotal * 100;
+    }
+
+    if (records.isNotEmpty || financingCount > 0) {
+      notes.add('分红融资数据来自东方财富F10');
+    } else {
+      notes.add('分红/融资数据未取到，请结合公司公告核实');
+    }
+
+    return DividendFinancingData(
+      dividendCount: dividendCount,
+      dividendTotal: dividendTotal > 0 ? dividendTotal : null,
+      financingCount: financingCount,
+      financingTotal: financingTotal > 0 ? financingTotal : null,
+      ipoTotal: (ipoTotal != null && ipoTotal > 0) ? ipoTotal : null,
+      refinanceTotal: refinanceTotal > 0 ? refinanceTotal : null,
+      dividendYield: dividendYield,
+      payoutRatio: payoutRatio,
+      divFinRatio: divFinRatio,
+      records: records,
+      financingRecords: financingRecords,
+      sourceNotes: notes,
+    );
+  }
+
+  /// 请求东方财富 F10「分红融资」聚合接口，返回 {fhyx, lnfhrz, zfmx, pgmx}。
+  Future<Map<String, dynamic>> _bonusFinancingAjax(String prefixedCode) async {
+    try {
+      final resp = await _dio.get(
+        'https://emweb.securities.eastmoney.com/PC_HSF10/BonusFinancing/PageAjax',
+        queryParameters: {'code': prefixedCode},
+        options: Options(
+          responseType: ResponseType.plain,
+          headers: {'Referer': 'https://emweb.securities.eastmoney.com/'},
+        ),
+      );
+      final raw = resp.data?.toString() ?? '';
+      if (raw.trimLeft().startsWith('{')) {
+        final decoded = jsonDecode(raw);
+        if (decoded is Map<String, dynamic>) return decoded;
+      }
+    } catch (e) { _log('F10分红融资[$prefixedCode] 异常: $e'); }
+    return const {};
+  }
+
+  /// 从「10派0.7元」「10转10.00派2.00元」文案中解析每10股税前派息(元)。
+  double _cashFromProfile(String profile) {
+    final m = RegExp(r'派([\d.]+)元').firstMatch(profile);
+    if (m != null) return double.tryParse(m.group(1)!) ?? 0;
+    return 0;
+  }
+
+  /// 股利支付率：最近有派息年度 TOTAL_DIVIDEND / 当年归母净利润 × 100。
+  /// 归母净利润用 总市值/PE ×(净利/市值)… 无法直接取时退化为 派息/EPS。
+  double? _derivePayoutFromLnfhrz(
+      List lnfhrz, Stock? q, double px) {
+    // 最近一个有分红的年度
+    Map? latest;
+    for (final e in lnfhrz.whereType<Map>()) {
+      final td = _n(e['TOTAL_DIVIDEND']) ?? 0;
+      if (td > 0) { latest = e; break; }
+    }
+    if (latest == null) return null;
+    final totalDiv = _n(latest['TOTAL_DIVIDEND']) ?? 0;
+    // 净利润 = 总市值 / PE（近似当年，量级正确即可）
+    if (q == null || q.pe <= 0 || q.marketCap <= 0) return null;
+    final netProfit = q.marketCap / q.pe;
+    if (netProfit <= 0) return null;
+    final ratio = totalDiv / netProfit * 100;
+    if (ratio <= 0 || ratio > 300) return null;
+    return ratio;
+  }
+
+  /// 报告期名称推断：ex 日期 4-6 月→上一年年报；其余按季度粗分。
+  String _reportPeriodFromDate(String date) {
+    if (date.length < 7) return '-';
+    final y = int.tryParse(date.substring(0, 4)) ?? 0;
+    final mo = int.tryParse(date.substring(5, 7)) ?? 0;
+    if (mo >= 4 && mo <= 8) return '${y - 1}年报';
+    if (mo >= 9 && mo <= 12) return '$y中报';
+    return '${y - 1}年报';
+  }
+
+  /// 基金分红：解析天天基金 pingzhongdata JS 中的 Data_netWorthTrend，
+  /// 其 unitMoney 字段形如「分红：每份派现金0.06元」。该文件与股票 datacenter
+  /// 不同源，移动端可稳定访问。基金无融资维度。
+  Future<DividendFinancingData> _fetchFundDividend(
+      String code, String market, {double? price}) async {
+    final notes = <String>[];
+    final records = <DividendRecord>[];
+    try {
+      final resp = await _dio.get(
+        'https://fund.eastmoney.com/pingzhongdata/$code.js',
+        options: Options(
+          responseType: ResponseType.plain,
+          headers: {'Referer': 'https://fund.eastmoney.com/$code.html'},
+        ),
+      );
+      final raw = resp.data?.toString() ?? '';
+      final m = RegExp(r'var\s+Data_netWorthTrend\s*=\s*(\[.*?\]);',
+              dotAll: true)
+          .firstMatch(raw);
+      if (m != null) {
+        final arr = jsonDecode(m.group(1)!);
+        if (arr is List) {
+          for (final e in arr.whereType<Map>()) {
+            final unit = (e['unitMoney'] ?? '').toString();
+            if (unit.isEmpty) continue;
+            final cash = _cashFromProfile(unit) == 0
+                ? (RegExp(r'([\d.]+)元').firstMatch(unit) != null
+                    ? double.tryParse(
+                            RegExp(r'([\d.]+)元').firstMatch(unit)!.group(1)!) ??
+                        0
+                    : 0)
+                : _cashFromProfile(unit);
+            if (cash <= 0) continue;
+            final ts = _n(e['x']);
+            final date = ts != null
+                ? DateTime.fromMillisecondsSinceEpoch(ts.toInt())
+                    .toIso8601String()
+                    .substring(0, 10)
+                : '';
+            records.add(DividendRecord(
+              reportPeriod: date.length >= 4 ? '${date.substring(0, 4)}年' : '-',
+              plan: '每份派现$cash元',
+              recordDate: date,
+              exDate: date,
+              cashPer10: cash * 10, // 每份→每10份口径，复用统计逻辑
+            ));
+          }
+        }
+      }
+      records.sort((a, b) => b.exDate.compareTo(a.exDate));
+      if (records.isNotEmpty) {
+        notes.add('基金分红数据来自天天基金（${records.length}次）');
+      }
+    } catch (e) { _log('基金分红[$code] pingzhongdata 异常: $e'); }
+
+    // 收益率：最近12个月每份分红合计 / 最新净值(价格)
+    double? dividendYield;
+    final px = (price != null && price > 0)
+        ? price
+        : (await _quoteSqt(code, market))?.price;
+    if (px != null && px > 0 && records.isNotEmpty) {
+      final cutoff = DateTime.now().subtract(const Duration(days: 365));
+      double last12m = 0;
+      for (final r in records) {
+        final d = DateTime.tryParse(r.exDate);
+        if (d != null && d.isAfter(cutoff)) last12m += r.cashPer10 / 10.0;
+      }
+      if (last12m > 0) dividendYield = last12m / px * 100;
+    }
+
+    if (records.isEmpty) notes.add('基金（ETF/LOF）无融资维度，且未取到分红记录');
+    else notes.add('基金无融资维度');
+
+    return DividendFinancingData(
+      dividendCount: records.where((e) => e.cashPer10 > 0).length,
+      dividendYield: dividendYield,
+      records: records,
+      sourceNotes: notes,
+      isFund: true,
+    );
+  }
+
+
+
+  /// ISO 日期串截取 yyyy-MM-dd。
+  String _fmtDate(String raw) =>
+      raw.length >= 10 ? raw.substring(0, 10) : (raw.isEmpty ? '-' : raw);
+
+  /// 新浪 F10 分红送配页兜底解析（GBK 编码）。
+  /// 表格列：公告日期 | 分红年度 | 送股 | 转增 | 派息(每10股,元) | 股权登记日 | 除权除息日 | ...
   // ── PE/PB 历史百分位 ──────────────────────────────────────────────────────
 
   Future<Map<String, dynamic>> fetchValuation(String code, String market) async {

@@ -6,6 +6,7 @@ import '../providers/stock_providers.dart';
 import '../models/watchlist.dart';
 import '../models/stock.dart';
 import '../models/stock_context.dart';
+import '../models/dividend_financing.dart';
 import 'seed_screening_screen.dart';
 import 'seed_plan_screen.dart';
 import 'harvest_calculator_screen.dart';
@@ -96,6 +97,15 @@ class StockDetailScreen extends ConsumerWidget {
                   : const SizedBox.shrink(),
               loading: () => const _SkeletonBox(height: 120),
               error: (_, __) => const SizedBox.shrink(),
+            ),
+            const SizedBox(height: 16),
+            quoteAsync.when(
+              data: (stock) =>
+                  _DividendFinancingSection(code: code, market: market, stock: stock),
+              loading: () =>
+                  _DividendFinancingSection(code: code, market: market, stock: null),
+              error: (_, __) =>
+                  _DividendFinancingSection(code: code, market: market, stock: null),
             ),
             const SizedBox(height: 16),
             quoteAsync.when(
@@ -374,6 +384,625 @@ class _ValCard extends StatelessWidget {
       ),
     );
   }
+}
+
+// ── 分红 & 融资板块 ───────────────────────────────────────────────────────────
+
+class _DividendFinancingSection extends ConsumerWidget {
+  final String code;
+  final String market;
+  final Stock? stock;
+  const _DividendFinancingSection(
+      {required this.code, required this.market, this.stock});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final async = ref.watch(dividendFinancingProvider((code, market)));
+    return async.when(
+      loading: () => const _SkeletonBox(height: 180),
+      // 拉取失败也展示空态卡片，避免只剩空白间距
+      error: (_, __) => _DividendFinancingCard(
+          data: const DividendFinancingData(
+              sourceNotes: ['分红/融资数据拉取失败，请下拉刷新重试']),
+          stock: stock),
+      data: (data) => _DividendFinancingCard(data: data, stock: stock),
+    );
+  }
+}
+
+class _DividendFinancingCard extends StatefulWidget {
+  final DividendFinancingData data;
+  final Stock? stock;
+  const _DividendFinancingCard({required this.data, this.stock});
+
+  @override
+  State<_DividendFinancingCard> createState() => _DividendFinancingCardState();
+}
+
+class _DividendFinancingCardState extends State<_DividendFinancingCard> {
+  bool _showDividend = true;
+
+  DividendFinancingData get d => widget.data;
+  Stock? get s => widget.stock;
+
+  bool get _isFund => s?.isFund ?? false;
+
+  /// 综合分红画像 + 当前估值，给出「播种」与「收割」两条专业建议。
+  /// 返回：分红定性文案、播种建议、收割建议、整体色调。
+  ({String profile, String seed, String harvest, Color color, IconData icon})
+      get _advice {
+    final ratio = d.divFinRatio;
+    final level = d.potentialLevel;
+    final pe = s?.pe ?? 0;
+    final pb = s?.pb ?? 0;
+    final peHigh = pe > 35;
+    final peLow = pe > 0 && pe < 15;
+    final broken = pb > 0 && pb < 1; // 破净
+    final yieldGood = (d.dividendYield ?? 0) >= 3;
+
+    // 估值口径的播种/收割措辞，供各分支复用
+    final seedByVal = peHigh
+        ? '当前 PE ${pe > 0 ? pe.toStringAsFixed(0) : "--"} 偏高，暂不宜播种，'
+            '等回调至合理估值或分红除权后的低点再分批建仓。'
+        : (peLow || broken)
+            ? '当前估值处于低位${broken ? "（PB<1 破净）" : ""}，是分批播种的较好窗口，'
+                '可按计划金额定投式建仓，越跌越买摊低成本。'
+            : '估值中性，建议小额试仓，价格回调时再加码，单批仓位≤总资金5%。';
+    final harvestByVal = peHigh
+        ? '若已有持仓且估值高企，可分批收割兑现浮盈，'
+            '保留分红形成的零成本底仓长期收息。'
+        : '持仓回本前不急于收割，让分红持续灌溉；'
+            '待估值修复到高位或达目标价时再分批止盈。';
+
+    // 无数据兜底
+    if (!d.hasData) {
+      return (
+        profile: _isFund
+            ? '基金（ETF/LOF）分红维度不适用，可参考跟踪指数股息与折溢价。'
+            : '暂未取到分红/融资数据，请下拉刷新或结合公司公告核实。',
+        seed: seedByVal,
+        harvest: harvestByVal,
+        color: AppTheme.textSecondary,
+        icon: Icons.info_outline,
+      );
+    }
+
+    if (d.dividendCount == 0 && d.financingCount > 0) {
+      return (
+        profile: '多次融资却从未派现，属「只抽血不灌溉」型，'
+            '零成本策略无法依赖分红降本。',
+        seed: '不建议将其作为收息底仓；如仅做波段，'
+            '务必等深度回调且放量企稳再小仓位播种。',
+        harvest: '反弹或达目标价即分批收割，不恋战，'
+            '严格执行止盈止损，避免长期套牢。',
+        color: AppTheme.riskRed,
+        icon: Icons.warning_amber_rounded,
+      );
+    }
+    if (ratio != null && ratio >= 100) {
+      return (
+        profile: '累计派现超过累计融资（派现融资比 ${ratio.toStringAsFixed(0)}%），'
+            '持续回馈股东的优质现金牛。',
+        seed: '适合作为零成本核心底仓。$seedByVal',
+        harvest: '首选长期持有收息，$harvestByVal',
+        color: AppTheme.primaryGreen,
+        icon: Icons.verified_outlined,
+      );
+    }
+    if (level == 'high') {
+      return (
+        profile: '分红频次高、连续性好，灌溉能力强'
+            '${yieldGood ? "，股息率可观" : ""}。',
+        seed: seedByVal,
+        harvest: harvestByVal,
+        color: AppTheme.primaryGreen,
+        icon: Icons.eco_outlined,
+      );
+    }
+    if (level == 'mid') {
+      return (
+        profile: '有一定分红记录但连续性或力度一般，'
+            '需观察股利支付率与现金流能否支撑分红延续。',
+        seed: '可小仓位参与，$seedByVal 避免在融资密集期追高。',
+        harvest: '以波段收割为主，$harvestByVal',
+        color: AppTheme.accentGold,
+        icon: Icons.balance,
+      );
+    }
+    return (
+      profile: '分红偏弱或以送转为主，现金回馈有限，灌溉来源不足。',
+      seed: '不宜重仓收息，$seedByVal 仓位从严控制。',
+      harvest: '依赖波段收割而非长期收息，$harvestByVal',
+      color: AppTheme.textSecondary,
+      icon: Icons.info_outline,
+    );
+  }
+
+  String _potentialLabel(String level) {
+    switch (level) {
+      case 'high': return '高';
+      case 'mid': return '中';
+      default: return '低';
+    }
+  }
+
+  Color _potentialColor(String level) {
+    switch (level) {
+      case 'high': return AppTheme.primaryGreen;
+      case 'mid': return AppTheme.accentGold;
+      default: return AppTheme.textMuted;
+    }
+  }
+
+  /// 「分红」页签：股息率 / 股利支付率 / 派现融资比 + 潜在派现概率 + 分红送转明细
+  List<Widget> _buildDividendPanel() {
+    return [
+      Row(children: [
+        Expanded(
+            child: _MetricTile(
+                label: '股息率',
+                value: d.dividendYield != null
+                    ? '${d.dividendYield!.toStringAsFixed(2)}%'
+                    : '--',
+                color: d.dividendYield != null && d.dividendYield! >= 3
+                    ? AppTheme.primaryGreen
+                    : AppTheme.textPrimary)),
+        Expanded(
+            child: _MetricTile(
+                label: '股利支付率',
+                value: d.payoutRatio != null
+                    ? '${d.payoutRatio!.toStringAsFixed(2)}%'
+                    : '--')),
+        Expanded(
+            child: _MetricTile(
+                label: '派现融资比',
+                value: d.divFinRatio != null
+                    ? '${d.divFinRatio!.toStringAsFixed(2)}%'
+                    : '--',
+                color: d.divFinRatio != null && d.divFinRatio! >= 100
+                    ? AppTheme.primaryGreen
+                    : d.divFinRatio != null && d.divFinRatio! < 20
+                        ? AppTheme.riskRed
+                        : AppTheme.textPrimary)),
+      ]),
+      const SizedBox(height: 14),
+      Row(children: [
+        const Icon(Icons.notifications_active_outlined,
+            size: 14, color: AppTheme.accentGold),
+        const SizedBox(width: 6),
+        const Text('潜在派现概率',
+            style: TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+        const SizedBox(width: 6),
+        Text(_potentialLabel(d.potentialLevel),
+            style: TextStyle(
+                color: _potentialColor(d.potentialLevel),
+                fontSize: 13,
+                fontWeight: FontWeight.w700)),
+      ]),
+      if (d.records.isNotEmpty) ...[
+        const SizedBox(height: 14),
+        const Text('分红送转',
+            style: TextStyle(
+                color: AppTheme.textPrimary,
+                fontSize: 13,
+                fontWeight: FontWeight.w700)),
+        const SizedBox(height: 10),
+        _DividendTable(records: d.records.take(6).toList()),
+      ] else ...[
+        const SizedBox(height: 12),
+        const _EmptyHint(text: '暂无分红送转记录'),
+      ],
+    ];
+  }
+
+  /// 「融资」页签：首发 / 再融资 / 派现融资比 + 融资明细
+  List<Widget> _buildFinancingPanel() {
+    return [
+      Row(children: [
+        Expanded(
+            child: _MetricTile(
+                label: '首发募资',
+                value: d.ipoTotal != null
+                    ? Formatters.largeNumber(d.ipoTotal!)
+                    : '--',
+                color: AppTheme.riskRed)),
+        Expanded(
+            child: _MetricTile(
+                label: '再融资',
+                value: d.refinanceTotal != null
+                    ? Formatters.largeNumber(d.refinanceTotal!)
+                    : '--',
+                color: AppTheme.accentGold)),
+        Expanded(
+            child: _MetricTile(
+                label: '派现融资比',
+                value: d.divFinRatio != null
+                    ? '${d.divFinRatio!.toStringAsFixed(2)}%'
+                    : '--',
+                color: d.divFinRatio != null && d.divFinRatio! >= 100
+                    ? AppTheme.primaryGreen
+                    : d.divFinRatio != null && d.divFinRatio! < 20
+                        ? AppTheme.riskRed
+                        : AppTheme.textPrimary)),
+      ]),
+      if (d.financingRecords.isNotEmpty) ...[
+        const SizedBox(height: 14),
+        const Text('融资明细',
+            style: TextStyle(
+                color: AppTheme.textPrimary,
+                fontSize: 13,
+                fontWeight: FontWeight.w700)),
+        const SizedBox(height: 10),
+        _FinancingTable(records: d.financingRecords.take(6).toList()),
+      ] else ...[
+        const SizedBox(height: 12),
+        _EmptyHint(
+            text: _isFund
+                ? '基金（ETF/LOF）无股权融资维度，分红来自跟踪指数成份股派息'
+                : d.dividendCount > 0
+                    ? '该标的上市后无再融资记录，仅靠自身经营即可持续派现，属优质标的'
+                    : '暂无融资记录'),
+      ],
+    ];
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final advice = _advice;
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppTheme.bgCard,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppTheme.borderColor, width: 0.5),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const _SectionHeader(title: '分红 · 融资参考'),
+          const SizedBox(height: 14),
+          _DivFinToggle(
+            showDividend: _isFund ? true : _showDividend,
+            financingDisabled: _isFund,
+            onChanged: (v) => setState(() => _showDividend = v),
+          ),
+          const SizedBox(height: 14),
+          _DivFinSummaryBar(data: d),
+          const SizedBox(height: 14),
+          // 分红 / 融资 两个页签展示各自维度的指标与明细
+          if (_isFund || _showDividend) ..._buildDividendPanel() else ..._buildFinancingPanel(),
+          const SizedBox(height: 14),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: advice.color.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: advice.color.withValues(alpha: 0.25)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Icon(advice.icon, size: 15, color: advice.color),
+                  const SizedBox(width: 8),
+                  Expanded(
+                      child: Text(advice.profile,
+                          style: TextStyle(
+                              color: advice.color,
+                              fontSize: 12,
+                              height: 1.5,
+                              fontWeight: FontWeight.w600))),
+                ]),
+                const SizedBox(height: 10),
+                _AdviceRow(
+                    tag: '播种',
+                    icon: Icons.grass_outlined,
+                    tagColor: AppTheme.primaryGreen,
+                    text: advice.seed),
+                const SizedBox(height: 8),
+                _AdviceRow(
+                    tag: '收割',
+                    icon: Icons.content_cut,
+                    tagColor: AppTheme.accentGold,
+                    text: advice.harvest),
+              ],
+            ),
+          ),
+          const SizedBox(height: 10),
+          const Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Icon(Icons.info_outline, size: 12, color: AppTheme.textMuted),
+            SizedBox(width: 5),
+            Expanded(
+                child: Text('数据来自东方财富数据中心，仅供参考，请结合公司公告核实。',
+                    style: TextStyle(
+                        color: AppTheme.textMuted, fontSize: 11, height: 1.4))),
+          ]),
+        ],
+      ),
+    );
+  }
+}
+
+class _DivFinToggle extends StatelessWidget {
+  final bool showDividend;
+  final bool financingDisabled; // 基金无融资维度时置灰「融资」页签
+  final ValueChanged<bool> onChanged;
+  const _DivFinToggle({
+    required this.showDividend,
+    required this.onChanged,
+    this.financingDisabled = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(children: [
+      _tab('分红', showDividend, AppTheme.accentGold, () => onChanged(true),
+          disabled: false),
+      const SizedBox(width: 8),
+      _tab('融资', !showDividend && !financingDisabled, AppTheme.riskRed,
+          financingDisabled ? null : () => onChanged(false),
+          disabled: financingDisabled),
+    ]);
+  }
+
+  Widget _tab(String label, bool sel, Color color, VoidCallback? onTap,
+      {required bool disabled}) {
+    final content = Container(
+      alignment: Alignment.center,
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      decoration: BoxDecoration(
+        color: disabled
+            ? AppTheme.bgCardLight.withValues(alpha: 0.4)
+            : sel
+                ? color.withValues(alpha: 0.15)
+                : AppTheme.bgCardLight,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+            color: sel ? color : AppTheme.borderColor, width: 0.8),
+      ),
+      child: Text(disabled ? '$label（无）' : label,
+          style: TextStyle(
+              color: disabled
+                  ? AppTheme.textMuted.withValues(alpha: 0.5)
+                  : sel
+                      ? color
+                      : AppTheme.textSecondary,
+              fontSize: 13,
+              fontWeight: sel ? FontWeight.w700 : FontWeight.normal)),
+    );
+    return Expanded(
+      child: disabled
+          ? Opacity(opacity: 0.6, child: content)
+          : GestureDetector(onTap: onTap, child: content),
+    );
+  }
+}
+
+class _DivFinSummaryBar extends StatelessWidget {
+  final DividendFinancingData data;
+  const _DivFinSummaryBar({required this.data});
+
+  @override
+  Widget build(BuildContext context) {
+    final divAmt = data.dividendTotal ?? 0;
+    final finAmt = data.financingTotal ?? 0;
+    final total = divAmt + finAmt;
+    final divFlex = total > 0 ? (divAmt / total * 100).round().clamp(1, 99) : 50;
+    final finFlex = 100 - divFlex;
+    return Column(children: [
+      Row(children: [
+        Expanded(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('A股派现 ${data.dividendCount}次',
+                style: const TextStyle(
+                    color: AppTheme.textSecondary, fontSize: 12)),
+            const SizedBox(height: 2),
+            Text(data.dividendTotal != null
+                    ? Formatters.largeNumber(data.dividendTotal!)
+                    : '--',
+                style: const TextStyle(
+                    color: AppTheme.accentGold,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700)),
+          ]),
+        ),
+        Expanded(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+            Text('A股融资 ${data.financingCount}次',
+                style: const TextStyle(
+                    color: AppTheme.textSecondary, fontSize: 12)),
+            const SizedBox(height: 2),
+            Text(data.financingTotal != null
+                    ? Formatters.largeNumber(data.financingTotal!)
+                    : '--',
+                style: const TextStyle(
+                    color: AppTheme.riskRed,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700)),
+          ]),
+        ),
+      ]),
+      const SizedBox(height: 8),
+      ClipRRect(
+        borderRadius: BorderRadius.circular(3),
+        child: Row(children: [
+          Expanded(
+            flex: divFlex,
+            child: Container(height: 6, color: AppTheme.accentGold),
+          ),
+          Expanded(
+            flex: finFlex,
+            child: Container(height: 6, color: AppTheme.riskRed),
+          ),
+        ]),
+      ),
+    ]);
+  }
+}
+
+class _MetricTile extends StatelessWidget {
+  final String label;
+  final String value;
+  final Color? color;
+  const _MetricTile({required this.label, required this.value, this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(children: [
+      Text(value,
+          style: TextStyle(
+              color: color ?? AppTheme.textPrimary,
+              fontSize: 17,
+              fontWeight: FontWeight.w800)),
+      const SizedBox(height: 4),
+      Text(label,
+          style: const TextStyle(color: AppTheme.textMuted, fontSize: 11)),
+    ]);
+  }
+}
+
+class _AdviceRow extends StatelessWidget {
+  final String tag;
+  final IconData icon;
+  final Color tagColor;
+  final String text;
+  const _AdviceRow(
+      {required this.tag,
+      required this.icon,
+      required this.tagColor,
+      required this.text});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Container(
+        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+        decoration: BoxDecoration(
+            color: tagColor.withValues(alpha: 0.15),
+            borderRadius: BorderRadius.circular(5)),
+        child: Row(children: [
+          Icon(icon, size: 12, color: tagColor),
+          const SizedBox(width: 4),
+          Text(tag,
+              style: TextStyle(
+                  color: tagColor,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700)),
+        ]),
+      ),
+      const SizedBox(width: 8),
+      Expanded(
+          child: Text(text,
+              style: const TextStyle(
+                  color: AppTheme.textSecondary, fontSize: 12, height: 1.45))),
+    ]);
+  }
+}
+
+class _EmptyHint extends StatelessWidget {
+  final String text;
+  const _EmptyHint({required this.text});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+      decoration: BoxDecoration(
+          color: AppTheme.bgCardLight,
+          borderRadius: BorderRadius.circular(8)),
+      child: Row(children: [
+        const Icon(Icons.inbox_outlined, size: 14, color: AppTheme.textMuted),
+        const SizedBox(width: 8),
+        Expanded(
+            child: Text(text,
+                style: const TextStyle(
+                    color: AppTheme.textSecondary,
+                    fontSize: 12,
+                    height: 1.4))),
+      ]),
+    );
+  }
+}
+
+class _FinancingTable extends StatelessWidget {
+  final List<FinancingRecord> records;
+  const _FinancingTable({required this.records});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(children: [
+      const Row(children: [
+        Expanded(flex: 4, child: _Th('日期')),
+        Expanded(flex: 3, child: _Th('类型')),
+        Expanded(
+            flex: 3,
+            child: Align(
+                alignment: Alignment.centerRight, child: _Th('募资净额'))),
+      ]),
+      const SizedBox(height: 6),
+      ...records.map((r) => Padding(
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            child: Row(children: [
+              Expanded(flex: 4, child: _Td(r.date)),
+              Expanded(flex: 3, child: _Td(r.type)),
+              Expanded(
+                  flex: 3,
+                  child: Text(Formatters.largeNumber(r.amount),
+                      textAlign: TextAlign.right,
+                      style: const TextStyle(
+                          color: AppTheme.riskRed,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600))),
+            ]),
+          )),
+    ]);
+  }
+}
+
+class _DividendTable extends StatelessWidget {
+  final List<DividendRecord> records;
+  const _DividendTable({required this.records});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(children: [
+      const Row(children: [
+        Expanded(flex: 3, child: _Th('报告期')),
+        Expanded(flex: 4, child: _Th('分红方案')),
+        Expanded(flex: 3, child: _Th('股权登记日')),
+      ]),
+      const SizedBox(height: 6),
+      ...records.map((r) => Padding(
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(flex: 3, child: _Td(r.reportPeriod)),
+                  Expanded(flex: 4, child: _Td(r.plan)),
+                  Expanded(flex: 3, child: _Td(r.recordDate)),
+                ]),
+          )),
+    ]);
+  }
+}
+
+class _Th extends StatelessWidget {
+  final String text;
+  const _Th(this.text);
+  @override
+  Widget build(BuildContext context) => Text(text,
+      style: const TextStyle(color: AppTheme.textMuted, fontSize: 11));
+}
+
+class _Td extends StatelessWidget {
+  final String text;
+  const _Td(this.text);
+  @override
+  Widget build(BuildContext context) => Text(text,
+      style: const TextStyle(
+          color: AppTheme.textSecondary, fontSize: 12, height: 1.3));
 }
 
 class _EntryAnalysisCard extends StatelessWidget {
