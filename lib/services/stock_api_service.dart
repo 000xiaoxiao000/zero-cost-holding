@@ -13,12 +13,14 @@ class _SinaFinanceResult {
   final double? debtRatio;
   final double? cashflowMargin;
   final double? goodwillRatio;
+  final double? pledgeRatio;
   final double? dividendYield;
   final int dividendYears;
   const _SinaFinanceResult({
     this.debtRatio,
     this.cashflowMargin,
     this.goodwillRatio,
+    this.pledgeRatio,
     this.dividendYield,
     this.dividendYears = 0,
   });
@@ -600,8 +602,15 @@ class StockApiService {
     final results = await Future.wait<dynamic>([
       _sinaFinanceData(code, market, price: price),
       _fetchFirstReport(
-        reportNames: const ['RPT_PLEDGE_RATIO', 'RPTA_WEB_EQUITYPLEDGE', 'RPT_F10_EH_EQUITYPLEDGE'],
-        filters: ['(SECURITY_CODE="$code")', '(SECUCODE="$secuCode")'],
+        // 东方财富股权质押数据中心：detail 报表按 SCODE 过滤（非 SECURITY_CODE）
+        reportNames: const [
+          'RPT_CSDC_LIST', 'RPT_CUSTOM_STOCK_PLEDGE_STATISTICS',
+          'RPT_STOCK_PLEDGE_STATISTICS', 'RPT_PLEDGE_RATIO',
+          'RPTA_WEB_EQUITYPLEDGE', 'RPT_F10_EH_EQUITYPLEDGE',
+        ],
+        filters: [
+          '(SCODE="$code")', '(SECURITY_CODE="$code")', '(SECUCODE="$secuCode")',
+        ],
         sortColumns: 'TRADE_DATE,END_DATE,REPORT_DATE',
       ),
       _fetchFirstReport(
@@ -622,8 +631,19 @@ class StockApiService {
     final financeRows = results[2] as List<Map<String, dynamic>>;
     final divRows     = results[3] as List<Map<String, dynamic>>;
 
-    final pledge = _firstNum(pledgeRows,
-        const ['PLEDGE_RATIO', 'TOTAL_PLEDGE_RATIO', 'ZYBL', 'PLEDGE_RATIO_TOTAL']);
+    double? pledge = _firstNum(pledgeRows, const [
+      'PLEDGE_RATIO', 'TOTAL_PLEDGE_RATIO', 'ZYBL', 'PLEDGE_RATIO_TOTAL',
+      'PLEDGE_NUM_RATIO', 'PLEDGERTATIO', 'TOTAL_SHARE_RATIO', 'ZYGSZB',
+    ]);
+    // datacenter 未命中时，走东方财富 F10 专用子域兜底
+    if (pledge == null) {
+      if (pledgeRows.isNotEmpty) {
+        _log('质押率[$code] datacenter 未匹配字段，首行keys=${pledgeRows.first.keys.toList()}');
+      } else {
+        _log('质押率[$code] datacenter 无返回行，尝试 emweb F10');
+      }
+      pledge = await _fetchPledgeRatioEm(code, market);
+    }
     if (pledge != null) notes.add('已自动读取质押率');
 
     final debtRatio = sinaData.debtRatio
@@ -899,6 +919,64 @@ class StockApiService {
       }
     }
     return [];
+  }
+
+  /// 大股东质押率：东方财富 F10 专用子域（emweb），返回 UTF-8 JSON。
+  /// 该域名与 datacenter 不同，datacenter 被挡时可能仍可达。
+  Future<double?> _fetchPledgeRatioEm(String code, String market) async {
+    final secid = market == 'SH' ? 'SH$code' : 'SZ$code';
+    for (final url in [
+      'https://emweb.securities.eastmoney.com/PC_HSF10/EquityPledge/PageAjax?code=$secid',
+      'https://emweb.eastmoney.com/PC_HSF10/EquityPledge/PageAjax?code=$secid',
+    ]) {
+      try {
+        final resp = await _dio.get(
+          url,
+          options: Options(
+            responseType: ResponseType.plain,
+            headers: {'Referer': 'https://emweb.securities.eastmoney.com/'},
+          ),
+        );
+        final raw = resp.data?.toString() ?? '';
+        if (raw.isEmpty || !raw.trimLeft().startsWith('{')) continue;
+        final decoded = jsonDecode(raw);
+        // 递归搜索质押比例字段（zybl/zzgszszb 等），取最近一期的百分比值
+        final v = _findPledgeRatio(decoded);
+        if (v != null) {
+          _log('质押率[$code] emweb F10 命中=$v%');
+          return v;
+        }
+      } catch (e) {
+        _log('质押率[$code] emweb 异常: $e');
+      }
+    }
+    return null;
+  }
+
+  /// 在 emweb 返回的嵌套 JSON 中递归查找「质押比例」类字段（0~100 的百分比）。
+  double? _findPledgeRatio(dynamic node) {
+    const keyHints = ['ZYBL', 'ZZGSZSZB', 'PLEDGE_RATIO', 'ZYGSZB', 'ZYBLTOTAL'];
+    if (node is Map) {
+      // 先在本层按 key 命中
+      for (final entry in node.entries) {
+        final k = entry.key.toString().toUpperCase();
+        if (keyHints.any((h) => k.contains(h))) {
+          final v = _n(entry.value);
+          if (v != null && v > 0 && v <= 100) return v;
+        }
+      }
+      // 再递归子节点（列表型数据通常首元素为最新一期）
+      for (final v in node.values) {
+        final r = _findPledgeRatio(v);
+        if (r != null) return r;
+      }
+    } else if (node is List) {
+      for (final e in node) {
+        final r = _findPledgeRatio(e);
+        if (r != null) return r;
+      }
+    }
+    return null;
   }
 
   Future<List<Map<String, dynamic>>> _datacenterRows({
