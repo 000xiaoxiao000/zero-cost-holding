@@ -1511,23 +1511,21 @@ class StockApiService {
     );
   }
 
-  /// 天天基金分红送配表：FundArchivesDatas.aspx?type=jjfh，返回内嵌 HTML 表格，
-  /// 列：年份 | 权益登记日 | 除息日 | 每份分红 | 分红发放日。
+  /// 天天基金分红送配页（服务端渲染 HTML）：fhsp_$code.html，
+  /// 表格列：年份 | 权益登记日 | 除息日 | 每份分红 | 分红发放日。
+  /// XHR(jjfh) 常返回空，故直接解析整页 HTML；用「两列均为日期」精确定位分红行。
   Future<List<DividendRecord>> _fundDividendJjfh(String code) async {
     final records = <DividendRecord>[];
     try {
       final resp = await _dio.get(
-        'https://fundf10.eastmoney.com/FundArchivesDatas.aspx',
-        queryParameters: {'type': 'jjfh', 'code': code, 'page': 1, 'per': 60},
+        'https://fundf10.eastmoney.com/fhsp_$code.html',
         options: Options(
           responseType: ResponseType.plain,
-          headers: {'Referer': 'https://fundf10.eastmoney.com/fhsp_$code.html'},
+          headers: {'Referer': 'https://fundf10.eastmoney.com/'},
         ),
       );
-      final raw = resp.data?.toString() ?? '';
-      final cm = RegExp(r'content:"(.*?)",\s*records:', dotAll: true)
-          .firstMatch(raw);
-      final html = cm != null ? cm.group(1)! : raw;
+      final html = resp.data?.toString() ?? '';
+      final dateRe = RegExp(r'^\d{4}-\d{2}-\d{2}$');
       for (final rowM in RegExp(r'<tr[^>]*>(.*?)</tr>', dotAll: true)
           .allMatches(html)) {
         final cells = RegExp(r'<td[^>]*>(.*?)</td>', dotAll: true)
@@ -1539,24 +1537,24 @@ class StockApiService {
             .toList();
         if (cells.length < 4) continue;
         final year = cells[0];
-        if (!RegExp(r'^\d{4}').hasMatch(year)) continue;
         final reg = cells[1];
         final ex = cells[2];
-        final cash = _cashFromProfile(cells[3]) == 0
-            ? (double.tryParse(
-                    RegExp(r'([\d.]+)').firstMatch(cells[3])?.group(1) ?? '') ??
-                0)
-            : _cashFromProfile(cells[3]);
+        // 分红行的判定：登记日、除息日两列都是标准日期
+        if (!RegExp(r'^\d{4}').hasMatch(year)) continue;
+        if (!dateRe.hasMatch(reg) || !dateRe.hasMatch(ex)) continue;
+        final cash = double.tryParse(
+                RegExp(r'([\d.]+)').firstMatch(cells[3])?.group(1) ?? '') ??
+            0;
         if (cash <= 0) continue;
         records.add(DividendRecord(
           reportPeriod: year,
           plan: '每份派现$cash元',
-          recordDate: _fmtDate(reg),
-          exDate: _fmtDate(ex),
+          recordDate: reg,
+          exDate: ex,
           cashPer10: cash * 10, // 每份→每10份口径，复用统计逻辑
         ));
       }
-    } catch (e) { _log('基金分红[$code] jjfh 异常: $e'); }
+    } catch (e) { _log('基金分红[$code] fhsp 异常: $e'); }
     return records;
   }
 

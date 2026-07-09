@@ -425,7 +425,7 @@ class _DividendFinancingCardState extends State<_DividendFinancingCard> {
   DividendFinancingData get d => widget.data;
   Stock? get s => widget.stock;
 
-  bool get _isFund => s?.isFund ?? false;
+  bool get _isFund => d.isFund || (s?.isFund ?? false);
 
   /// 基金累计每份分红（元），来自各期 cashPer10/10 求和。
   String _fundCumPerShare() {
