@@ -637,6 +637,10 @@ class _HoldingCard extends ConsumerWidget {
                 const SizedBox(width: 4),
                 PopupMenuButton<String>(
                   icon: const Icon(Icons.more_vert, color: AppTheme.textMuted),
+                  padding: EdgeInsets.zero,
+                  constraints:
+                      const BoxConstraints(minWidth: 32, minHeight: 32),
+                  splashRadius: 20,
                   color: AppTheme.bgCard,
                   onSelected: (value) async {
                     if (value == 'delete') {

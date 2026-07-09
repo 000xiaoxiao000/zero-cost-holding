@@ -15,8 +15,8 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  // 5个底部标签：计划 / 自选 / 持仓 / 排雷 / 策略
-  int _currentIndex = 0;
+  // 5个底部标签：自选 / 排雷 / 计划 / 持仓 / 策略
+  int _currentIndex = 2; // 默认进入「计划」
 
   // "计划"标签内的子页面 tab（0=播种 1=收割）
   int _planSubIndex = 0;
@@ -24,17 +24,17 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget get _currentPage {
     switch (_currentIndex) {
       case 0:
+        return const WatchlistScreen(key: ValueKey('tab-watchlist'));
+      case 1:
+        return const SeedScreeningScreen(key: ValueKey('tab-screen'));
+      case 2:
         return _PlanTabPage(
           key: const ValueKey('tab-plan'),
           subIndex: _planSubIndex,
           onSubIndexChanged: (i) => setState(() => _planSubIndex = i),
         );
-      case 1:
-        return const WatchlistScreen(key: ValueKey('tab-watchlist'));
-      case 2:
-        return const HoldingTrackerScreen(key: ValueKey('tab-holding'));
       case 3:
-        return const SeedScreeningScreen(key: ValueKey('tab-screen'));
+        return const HoldingTrackerScreen(key: ValueKey('tab-holding'));
       case 4:
         return const StrategyScreen(key: ValueKey('tab-strategy'));
       default:
@@ -61,24 +61,24 @@ class _HomeScreenState extends State<HomeScreen> {
           onTap: (i) => setState(() => _currentIndex = i),
           items: const [
             BottomNavigationBarItem(
-              icon: Icon(Icons.grass_outlined),
-              activeIcon: Icon(Icons.grass),
-              label: '计划',
-            ),
-            BottomNavigationBarItem(
               icon: Icon(Icons.bookmark_outline),
               activeIcon: Icon(Icons.bookmark),
               label: '自选',
             ),
             BottomNavigationBarItem(
-              icon: Icon(Icons.account_balance_wallet_outlined),
-              activeIcon: Icon(Icons.account_balance_wallet),
-              label: '持仓',
-            ),
-            BottomNavigationBarItem(
               icon: Icon(Icons.health_and_safety_outlined),
               activeIcon: Icon(Icons.health_and_safety),
               label: '排雷',
+            ),
+            BottomNavigationBarItem(
+              icon: Icon(Icons.grass_outlined),
+              activeIcon: Icon(Icons.grass),
+              label: '计划',
+            ),
+            BottomNavigationBarItem(
+              icon: Icon(Icons.account_balance_wallet_outlined),
+              activeIcon: Icon(Icons.account_balance_wallet),
+              label: '持仓',
             ),
             BottomNavigationBarItem(
               icon: Icon(Icons.rule_outlined),
