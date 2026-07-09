@@ -450,8 +450,10 @@ class StockApiService {
         final mktNum = e['MktNum']?.toString() ?? '';
         final classify = e['Classify']?.toString() ?? '';
         return type == '1' || type == '2' || type == '8' || type == '25' ||
-            mktNum == '0' || mktNum == '1' ||
-            classify == 'AShare' || classify == 'FundShare' || classify == 'ETFShare';
+            type == '77' || type == '78' ||
+            mktNum == '0' || mktNum == '1' || mktNum == '2' ||
+            classify == 'AShare' || classify == 'FundShare' ||
+            classify == 'ETFShare' || classify == 'BjShare';
       }).map((e) {
         final code = e['Code']!.toString();
         final mktNum = e['MktNum']?.toString() ?? '';
@@ -923,11 +925,17 @@ class StockApiService {
 
   /// 大股东质押率：东方财富 F10 专用子域（emweb），返回 UTF-8 JSON。
   /// 该域名与 datacenter 不同，datacenter 被挡时可能仍可达。
+  /// 返回值语义：
+  ///   - >0：命中质押比例
+  ///   - 0.0：数据源可达且明确无质押（如国资控股股票），视为健康
+  ///   - null：所有源均不可达/无有效响应，无法判断
   Future<double?> _fetchPledgeRatioEm(String code, String market) async {
     final secid = market == 'SH' ? 'SH$code' : 'SZ$code';
+    bool anyReachable = false;
     for (final url in [
       'https://emweb.securities.eastmoney.com/PC_HSF10/EquityPledge/PageAjax?code=$secid',
       'https://emweb.eastmoney.com/PC_HSF10/EquityPledge/PageAjax?code=$secid',
+      'https://emweb.securities.eastmoney.com/PC_HSF10/OperationsRequired/PageAjax?code=$secid',
     ]) {
       try {
         final resp = await _dio.get(
@@ -938,9 +946,14 @@ class StockApiService {
           ),
         );
         final raw = resp.data?.toString() ?? '';
-        if (raw.isEmpty || !raw.trimLeft().startsWith('{')) continue;
+        if (raw.isEmpty) { _log('质押率[$code] emweb 空响应: $url'); continue; }
+        final trimmed = raw.trimLeft();
+        if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) {
+          _log('质押率[$code] emweb 非JSON(前40字符)=${raw.substring(0, raw.length.clamp(0, 40))}');
+          continue;
+        }
         final decoded = jsonDecode(raw);
-        // 递归搜索质押比例字段（zybl/zzgszszb 等），取最近一期的百分比值
+        anyReachable = true;
         final v = _findPledgeRatio(decoded);
         if (v != null) {
           _log('质押率[$code] emweb F10 命中=$v%');
@@ -949,6 +962,11 @@ class StockApiService {
       } catch (e) {
         _log('质押率[$code] emweb 异常: $e');
       }
+    }
+    // 数据源可达但无质押比例字段 → 明确无质押，返回 0
+    if (anyReachable) {
+      _log('质押率[$code] emweb 可达但无质押记录，判定为 0%（无质押）');
+      return 0.0;
     }
     return null;
   }
