@@ -11,11 +11,13 @@ import 'api_config.dart';
 class _SinaFinanceResult {
   final double? debtRatio;
   final double? cashflowMargin;
+  final double? goodwillRatio;
   final double? dividendYield;
   final int dividendYears;
   const _SinaFinanceResult({
     this.debtRatio,
     this.cashflowMargin,
+    this.goodwillRatio,
     this.dividendYield,
     this.dividendYears = 0,
   });
@@ -626,7 +628,8 @@ class StockApiService {
         ?? _extractCashflow(financeRows.isNotEmpty ? financeRows.first : null);
     if (cashflowMargin != null) notes.add('已自动读取现金流利润比');
 
-    final goodwillRatio = _extractGoodwill(financeRows.isNotEmpty ? financeRows.first : null);
+    final goodwillRatio = sinaData.goodwillRatio
+        ?? _extractGoodwill(financeRows.isNotEmpty ? financeRows.first : null);
     if (goodwillRatio != null) notes.add('已自动估算商誉占比');
 
     double? dividendYield = sinaData.dividendYield
@@ -728,27 +731,70 @@ class StockApiService {
       _log('新浪F10分红[$code] 异常: $e');
     }
 
-    // ── 财务摘要：用 GBK 字节序列定位资产负债率 ─────────────────────────────
+    // ── 财务指标：vFD_FinancialGuideLine 页含预计算好的比率(%) ─────────────
+    // 该页每个指标是百分比，无需自己算除法；用 GBK 字节序列定位（避免 GBK 解码）
+    double? goodwillRatio;
     try {
       final resp = await _dio.get(
-        'https://money.finance.sina.com.cn/corp/go.php/vFD_FinanceSummary/stockid/$code/displaytype/4.phtml',
+        'https://money.finance.sina.com.cn/corp/go.php/vFD_FinancialGuideLine/stockid/$code/ctrl/all/displaytype/4.phtml',
         options: Options(
           responseType: ResponseType.bytes,
           headers: {'Referer': 'https://finance.sina.com.cn/'},
         ),
       );
       final bytes = resp.data as List<int>? ?? [];
-      // 「资产负债率」的 GBK 字节序列
-      const debtLabelGbk = [0xD7, 0xCA, 0xB2, 0xFA, 0xB8, 0xBA, 0xD5, 0xAE, 0xC2, 0xCA];
-      debtRatio = _numAfterGbkLabel(bytes, debtLabelGbk);
-      _log('新浪F10财务[$code] 负债率=$debtRatio');
+
+      // 资产负债率(%)：直接是百分数，上限100
+      debtRatio = _numAfterGbkLabel(
+        bytes,
+        const [0xD7, 0xCA, 0xB2, 0xFA, 0xB8, 0xBA, 0xD5, 0xAE, 0xC2, 0xCA],
+        maxValue: 100.0,
+      );
+
+      // 经营现金净流量与净利润的比率(%)：直接是百分数，可为负
+      cashflowMargin = _numAfterGbkLabel(
+        bytes,
+        const [0xBE, 0xAD, 0xD3, 0xAA, 0xCF, 0xD6, 0xBD, 0xF0, 0xBE, 0xBB,
+               0xC1, 0xF7, 0xC1, 0xBF, 0xD3, 0xEB, 0xBE, 0xBB, 0xC0, 0xFB,
+               0xC8, 0xF3, 0xB5, 0xC4, 0xB1, 0xC8, 0xC2, 0xCA],
+        allowNegative: true,
+        maxValue: 100000,
+      );
+
+      _log('新浪F10财务指标[$code] 负债率=$debtRatio 现金流比=$cashflowMargin');
     } catch (e) {
-      _log('新浪F10财务[$code] 异常: $e');
+      _log('新浪F10财务指标[$code] 异常: $e');
+    }
+
+    // ── 商誉/净资产：财务摘要资产负债表页 vFD_BalanceSheet ──────────────────
+    try {
+      final resp = await _dio.get(
+        'https://money.finance.sina.com.cn/corp/go.php/vFD_BalanceSheet/stockid/$code/ctrl/part/displaytype/4.phtml',
+        options: Options(
+          responseType: ResponseType.bytes,
+          headers: {'Referer': 'https://finance.sina.com.cn/'},
+        ),
+      );
+      final bytes = resp.data as List<int>? ?? [];
+      // 商誉（金额）
+      final goodwill = _numAfterGbkLabel(bytes, const [0xC9, 0xCC, 0xD3, 0xFE]);
+      // 所有者权益合计（金额）
+      final equity = _numAfterGbkLabel(
+        bytes,
+        const [0xCB, 0xF9, 0xD3, 0xD0, 0xD5, 0xDF, 0xC8, 0xA8, 0xD2, 0xE6],
+      );
+      if (goodwill != null && equity != null && equity > 0) {
+        goodwillRatio = goodwill / equity * 100;
+      }
+      _log('新浪F10资产负债[$code] 商誉占比=$goodwillRatio');
+    } catch (e) {
+      _log('新浪F10资产负债[$code] 异常: $e');
     }
 
     return _SinaFinanceResult(
       debtRatio: debtRatio,
       cashflowMargin: cashflowMargin,
+      goodwillRatio: goodwillRatio,
       dividendYield: dividendYield,
       dividendYears: dividendYears,
     );
@@ -756,9 +802,10 @@ class StockApiService {
 
   /// 在原始字节流里定位一段 GBK 标签字节，返回其后出现的第一个「合理」数值。
   /// 用于 GBK 页面中按确定性字节序列定位中文字段（避免 GBK 解码）。
-  /// [maxValue] 过滤上限；[skipYearLike] 跳过形如 1990~2100 的年份整数。
+  /// [maxValue] 过滤上限；[skipYearLike] 跳过形如 1990~2100 的年份整数；
+  /// [allowNegative] 允许负数（如经营现金流净额可能为负）。
   double? _numAfterGbkLabel(List<int> bytes, List<int> label,
-      {double maxValue = 100000, bool skipYearLike = true}) {
+      {double maxValue = 1e15, bool skipYearLike = true, bool allowNegative = false}) {
     if (bytes.isEmpty || label.isEmpty) return null;
     for (int i = 0; i + label.length < bytes.length; i++) {
       bool matched = true;
@@ -767,21 +814,25 @@ class StockApiService {
       }
       if (!matched) continue;
       int k = i + label.length;
-      final end = (k + 300).clamp(0, bytes.length);
-      // 在标签之后连续扫描多个数字串，返回第一个通过校验的
+      final end = (k + 400).clamp(0, bytes.length);
       while (k < end) {
         final sb = StringBuffer();
         bool started = false;
+        bool neg = false;
         for (; k < end; k++) {
           final b = bytes[k];
           if (b >= 0x30 && b <= 0x39) { sb.writeCharCode(b); started = true; }
           else if (b == 0x2E && started) { sb.writeCharCode(b); }
+          else if (b == 0x2D && !started && allowNegative) { neg = true; }
           else if (started) { break; }
+          else { neg = false; }
         }
         if (!started) { k++; continue; }
+        var v = double.tryParse(sb.toString());
+        if (v == null) continue;
+        if (neg) v = -v;
         final str = sb.toString();
-        final v = double.tryParse(str);
-        if (v != null && v > 0 && v < maxValue) {
+        if (v.abs() > 0 && v.abs() < maxValue) {
           final isYearLike = skipYearLike &&
               !str.contains('.') && v >= 1990 && v <= 2100;
           if (!isYearLike) return v;

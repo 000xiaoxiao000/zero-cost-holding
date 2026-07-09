@@ -483,7 +483,8 @@ class _AutoFetchCardState extends State<_AutoFetchCard> {
   void _showOv() {
     _ov?.remove();
     final box = context.findRenderObject() as RenderBox?;
-    final w = box != null ? (box.size.width - 32 - 12) / 2 : 180.0;
+    // 输入框现为整行宽度（卡片内边距 16*2 = 32）
+    final w = box != null ? (box.size.width - 32) : 320.0;
     _ov = OverlayEntry(builder: (_) => Positioned(
       width: w,
       child: CompositedTransformFollower(
@@ -496,6 +497,31 @@ class _AutoFetchCardState extends State<_AutoFetchCard> {
 
   @override
   void dispose() { _ov?.remove(); super.dispose(); }
+
+  void _clearCode() {
+    widget.codeController.clear();
+    widget.onChanged();
+    _ov?.remove(); _ov = null;
+    setState(() => _sugg = []);
+  }
+
+  Widget? _buildCodeSuffix() {
+    if (_searching) {
+      return const Padding(
+        padding: EdgeInsets.all(12),
+        child: SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 1.5)),
+      );
+    }
+    if (widget.codeController.text.isNotEmpty) {
+      return IconButton(
+        icon: const Icon(Icons.cancel, size: 18, color: AppTheme.textSecondary),
+        splashRadius: 18,
+        tooltip: '清除',
+        onPressed: _clearCode,
+      );
+    }
+    return null;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -518,48 +544,42 @@ class _AutoFetchCardState extends State<_AutoFetchCard> {
           decoration: const InputDecoration(hintText: '例：贵州茅台'),
         ),
         const SizedBox(height: 12),
-        Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            _FieldLabel('股票代码 / 名称'),
-            const SizedBox(height: 6),
-            CompositedTransformTarget(
-              link: _link,
-              child: TextField(
-                controller: widget.codeController,
-                style: const TextStyle(color: AppTheme.textPrimary, fontSize: 14),
-                decoration: InputDecoration(
-                  hintText: '代码或名称',
-                  suffixIcon: _searching ? const Padding(padding: EdgeInsets.all(12), child: SizedBox(width:14,height:14,child:CircularProgressIndicator(strokeWidth:1.5))) : null,
-                ),
-                onChanged: _onCode,
-                onTap: () { if (_sugg.isNotEmpty) _showOv(); },
-              ),
+        _FieldLabel('股票代码 / 名称'),
+        const SizedBox(height: 6),
+        CompositedTransformTarget(
+          link: _link,
+          child: TextField(
+            controller: widget.codeController,
+            style: const TextStyle(color: AppTheme.textPrimary, fontSize: 14),
+            decoration: InputDecoration(
+              hintText: '输入代码或名称，如 600519 / 贵州茅台',
+              suffixIcon: _buildCodeSuffix(),
             ),
-          ])),
-          const SizedBox(width: 12),
-          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            _FieldLabel('市场'),
-            const SizedBox(height: 6),
-            widget.isFund
-                ? Container(
-                    alignment: Alignment.center,
-                    padding: const EdgeInsets.symmetric(vertical: 10),
-                    decoration: BoxDecoration(
-                      color: AppTheme.primaryGreen.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: AppTheme.primaryGreen.withValues(alpha: 0.5)),
-                    ),
-                    child: Text('基金', style: TextStyle(
-                      color: AppTheme.primaryGreen, fontSize: 13, fontWeight: FontWeight.w700,
-                    )),
-                  )
-                : _TogglePair(
-                    labels: const ['沪市', '深市', '京市'],
-                    values: const ['SH', 'SZ', 'BJ'],
-                    selected: widget.market, onChanged: widget.onMarketChanged,
-                  ),
-          ])),
-        ]),
+            onChanged: _onCode,
+            onTap: () { if (_sugg.isNotEmpty) _showOv(); },
+          ),
+        ),
+        const SizedBox(height: 12),
+        _FieldLabel('市场'),
+        const SizedBox(height: 6),
+        widget.isFund
+            ? Container(
+                alignment: Alignment.center,
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                decoration: BoxDecoration(
+                  color: AppTheme.primaryGreen.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: AppTheme.primaryGreen.withValues(alpha: 0.5)),
+                ),
+                child: Text('基金', style: TextStyle(
+                  color: AppTheme.primaryGreen, fontSize: 13, fontWeight: FontWeight.w700,
+                )),
+              )
+            : _TogglePair(
+                labels: const ['沪市', '深市', '京市'],
+                values: const ['SH', 'SZ', 'BJ'],
+                selected: widget.market, onChanged: widget.onMarketChanged,
+              ),
         const SizedBox(height: 14),
         SizedBox(
           width: double.infinity, height: 46,
