@@ -17,6 +17,9 @@ class Stock {
   double marketCap;
   double turnoverRate;
   DateTime updatedAt;
+  /// 数据源自身的行情时间（如 sqt 返回的 20240709153005），可能与本地拉取时间不同。
+  /// 为空表示数据源未提供时间戳。
+  final DateTime? dataTime;
 
   Stock({
     required this.code,
@@ -36,6 +39,7 @@ class Stock {
     this.pb = 0.0,
     this.marketCap = 0.0,
     this.turnoverRate = 0.0,
+    this.dataTime,
     DateTime? updatedAt,
   }) : updatedAt = updatedAt ?? DateTime.now();
 
@@ -62,6 +66,7 @@ class Stock {
       'pb': pb,
       'market_cap': marketCap,
       'turnover_rate': turnoverRate,
+      'data_time': dataTime?.toIso8601String(),
       'updated_at': updatedAt.toIso8601String(),
     };
   }
@@ -85,6 +90,9 @@ class Stock {
       pb: (map['pb'] ?? 0.0).toDouble(),
       marketCap: (map['market_cap'] ?? 0.0).toDouble(),
       turnoverRate: (map['turnover_rate'] ?? 0.0).toDouble(),
+      dataTime: map['data_time'] != null
+          ? DateTime.tryParse(map['data_time'])
+          : null,
       updatedAt: map['updated_at'] != null
           ? DateTime.parse(map['updated_at'])
           : DateTime.now(),
@@ -109,6 +117,7 @@ class Stock {
         pb: pb,
         marketCap: marketCap,
         turnoverRate: turnoverRate,
+        dataTime: dataTime,
         updatedAt: updatedAt,
       );
 }

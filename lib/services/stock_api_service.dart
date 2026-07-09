@@ -217,6 +217,8 @@ class StockApiService {
       final preClose = double.tryParse(p[4]) ?? 0.0;
       if (price <= 0) return null;
       final marketCapYi = double.tryParse(p.length > 44 ? p[44] : '') ?? 0.0;
+      // sqt 索引 30 为行情时间戳，格式 yyyyMMddHHmmss
+      final dataTime = _parseSqtTime(p.length > 30 ? p[30] : '');
       return Stock(
         code: code, name: p[1], market: market,
         price: price, change: price - preClose,
@@ -230,8 +232,27 @@ class StockApiService {
         pe: double.tryParse(p.length > 39 ? p[39] : '') ?? 0.0,
         pb: double.tryParse(p.length > 46 ? p[46] : '') ?? 0.0,
         marketCap: marketCapYi > 0 ? marketCapYi * 1e8 : 0.0,
+        dataTime: dataTime,
       );
     } catch (_) { return null; }
+  }
+
+  /// 解析 sqt 行情时间戳（yyyyMMddHHmmss，14 位）为 DateTime。
+  DateTime? _parseSqtTime(String s) {
+    final t = s.trim();
+    if (t.length != 14 || int.tryParse(t) == null) return null;
+    try {
+      return DateTime(
+        int.parse(t.substring(0, 4)),   // year
+        int.parse(t.substring(4, 6)),   // month
+        int.parse(t.substring(6, 8)),   // day
+        int.parse(t.substring(8, 10)),  // hour
+        int.parse(t.substring(10, 12)), // minute
+        int.parse(t.substring(12, 14)), // second
+      );
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<Stock?> _quoteSina(String code, String market) async {
