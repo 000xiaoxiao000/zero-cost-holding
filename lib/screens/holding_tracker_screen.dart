@@ -576,11 +576,15 @@ class _HoldingCard extends ConsumerWidget {
                     children: [
                       Row(
                         children: [
-                          Text(position.stockName,
-                              style: const TextStyle(
-                                  color: AppTheme.textPrimary,
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w600)),
+                          Flexible(
+                            child: Text(position.stockName,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                    color: AppTheme.textPrimary,
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w600)),
+                          ),
                           if (position.isZeroCost) ...[
                             const SizedBox(width: 8),
                             Container(
@@ -607,19 +611,28 @@ class _HoldingCard extends ConsumerWidget {
                     ],
                   ),
                 ),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Text(
-                        '剩余 ${Formatters.quantity(position.totalRemaining)} ${position.quantityUnit}',
-                        style: const TextStyle(
-                            color: AppTheme.textSecondary, fontSize: 12)),
-                    const SizedBox(height: 3),
-                    Text(
-                        '最新成本价 ¥${Formatters.price(position.latestZeroCostPrice)}',
-                        style: const TextStyle(
-                            color: AppTheme.textSecondary, fontSize: 13)),
-                  ],
+                const SizedBox(width: 8),
+                Flexible(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Text(
+                          '剩余 ${Formatters.quantity(position.totalRemaining)} ${position.quantityUnit}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          textAlign: TextAlign.end,
+                          style: const TextStyle(
+                              color: AppTheme.textSecondary, fontSize: 12)),
+                      const SizedBox(height: 3),
+                      Text(
+                          '最新成本价 ¥${Formatters.price(position.latestZeroCostPrice)}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          textAlign: TextAlign.end,
+                          style: const TextStyle(
+                              color: AppTheme.textSecondary, fontSize: 13)),
+                    ],
+                  ),
                 ),
                 const SizedBox(width: 4),
                 PopupMenuButton<String>(
