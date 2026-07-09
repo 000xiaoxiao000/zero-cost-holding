@@ -174,6 +174,22 @@ class _QuoteCard extends StatelessWidget {
                   ),
                 ],
               ),
+              const Spacer(),
+              if (stock.dataTime != null)
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    const Text('行情时间',
+                        style: TextStyle(
+                            color: AppTheme.textSecondary, fontSize: 10)),
+                    const SizedBox(height: 2),
+                    Text(_fmtQuoteTime(stock.dataTime!),
+                        style: const TextStyle(
+                            color: AppTheme.textSecondary,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600)),
+                  ],
+                ),
             ],
           ),
           const SizedBox(height: 16),
@@ -214,6 +230,16 @@ class _QuoteCard extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  /// 行情数据时间：当天显示时分，跨天补月日。
+  String _fmtQuoteTime(DateTime t) {
+    String two(int n) => n.toString().padLeft(2, '0');
+    final now = DateTime.now();
+    final hm = '${two(t.hour)}:${two(t.minute)}';
+    final sameDay =
+        t.year == now.year && t.month == now.month && t.day == now.day;
+    return sameDay ? hm : '${two(t.month)}-${two(t.day)} $hm';
   }
 }
 

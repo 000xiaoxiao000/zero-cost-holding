@@ -229,6 +229,7 @@ class StockApiService {
         preClose: preClose,
         volume: (double.tryParse(p[6]) ?? 0.0) * 100,
         turnover: double.tryParse(p.length > 37 ? p[37] : '') ?? 0.0,
+        turnoverRate: double.tryParse(p.length > 38 ? p[38] : '') ?? 0.0,
         pe: double.tryParse(p.length > 39 ? p[39] : '') ?? 0.0,
         pb: double.tryParse(p.length > 46 ? p[46] : '') ?? 0.0,
         marketCap: marketCapYi > 0 ? marketCapYi * 1e8 : 0.0,
@@ -361,9 +362,11 @@ class StockApiService {
           preClose: preClose,
           volume: (double.tryParse(p[6]) ?? 0.0) * 100,
           turnover: double.tryParse(p.length > 37 ? p[37] : '') ?? 0.0,
+          turnoverRate: double.tryParse(p.length > 38 ? p[38] : '') ?? 0.0,
           pe: double.tryParse(p.length > 39 ? p[39] : '') ?? 0.0,
           pb: double.tryParse(p.length > 46 ? p[46] : '') ?? 0.0,
           marketCap: marketCapYi > 0 ? marketCapYi * 1e8 : 0.0,
+          dataTime: _parseSqtTime(p.length > 30 ? p[30] : ''),
         );
       }
     } catch (e) { _log('批量行情[sqt]失败: $e'); }

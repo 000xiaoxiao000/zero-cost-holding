@@ -29,6 +29,7 @@ class _SeedScreeningScreenState extends State<SeedScreeningScreen> {
   bool _isSt = false, _delistRisk = false, _violationGuarantee = false, _financialFraudRisk = false;
 
   double? _autoPrice;
+  DateTime? _autoDataTime;
   int?    _autoPePct, _autoPbPct;
   bool    _autoPeEst = false, _autoPbEst = false;
   double? _autoPledge, _autoDebt, _autoGoodwill, _autoCashflow;
@@ -147,6 +148,8 @@ class _SeedScreeningScreenState extends State<SeedScreeningScreen> {
         if (stock.name.isNotEmpty) _nameController.text = stock.name;
         _isFund = isFundDetected;
         _autoPrice = price > 0 ? price : null;
+        // 优先用数据源自带的行情时间；缺失时用本地拉取时间兜底
+        _autoDataTime = stock.dataTime ?? DateTime.now();
         _autoPePct = pe; _autoPbPct = pb;
         _autoPeEst = !isFundDetected && pct.pePercentile == null;
         _autoPbEst = !isFundDetected && pct.pbPercentile == null;
@@ -173,6 +176,12 @@ class _SeedScreeningScreenState extends State<SeedScreeningScreen> {
 
   int _fbPe(double v) { if (v<=0) return 50; if (v<=10) return 15; if (v<=15) return 25; if (v<=25) return 45; if (v<=40) return 70; return 90; }
   int _fbPb(double v) { if (v<=0) return 50; if (v<=1) return 20; if (v<=1.8) return 35; if (v<=3) return 55; if (v<=5) return 75; return 90; }
+
+  /// 格式化行情数据时间：完整显示 年-月-日 时:分。
+  String _fmtDataTime(DateTime t) {
+    String two(int n) => n.toString().padLeft(2, '0');
+    return '${t.year}-${two(t.month)}-${two(t.day)} ${two(t.hour)}:${two(t.minute)}';
+  }
 
   String _detectTrend(List<Map<String, dynamic>> k) {
     if (k.length < 60) return 'neutral';
@@ -291,7 +300,13 @@ class _SeedScreeningScreenState extends State<SeedScreeningScreen> {
             const SizedBox(height: 16),
           ],
           // ③ 自动拉取区块标题
-          _SectionLabel(label: '自动拉取数据', icon: Icons.cloud_done_outlined, color: AppTheme.accent),
+          Row(children: [
+            _SectionLabel(label: '自动拉取数据', icon: Icons.cloud_done_outlined, color: AppTheme.accent),
+            const Spacer(),
+            if (_autoDataTime != null)
+              Text('行情时间 ${_fmtDataTime(_autoDataTime!)}',
+                  style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
+          ]),
           const SizedBox(height: 8),
           // 基金显示行情+K线趋势，隐藏 PE/PB 百分位（基金无此指标）
           if (_isFund)
