@@ -427,6 +427,16 @@ class _DividendFinancingCardState extends State<_DividendFinancingCard> {
 
   bool get _isFund => s?.isFund ?? false;
 
+  /// 基金累计每份分红（元），来自各期 cashPer10/10 求和。
+  String _fundCumPerShare() {
+    double sum = 0;
+    for (final r in d.records) {
+      if (r.cashPer10 > 0) sum += r.cashPer10 / 10.0;
+    }
+    if (sum <= 0) return '--';
+    return '${sum.toStringAsFixed(3)}元';
+  }
+
   /// 综合分红画像 + 当前估值，给出「播种」与「收割」两条专业建议。
   /// 返回：分红定性文案、播种建议、收割建议、整体色调。
   ({String profile, String seed, String harvest, Color color, IconData icon})
@@ -534,36 +544,47 @@ class _DividendFinancingCardState extends State<_DividendFinancingCard> {
     }
   }
 
-  /// 「分红」页签：股息率 / 股利支付率 / 派现融资比 + 潜在派现概率 + 分红送转明细
+  /// 「分红」页签：个股显示股息率/股利支付率/派现融资比；基金显示股息率/分红次数/累计每份分红。
   List<Widget> _buildDividendPanel() {
     return [
       Row(children: [
         Expanded(
             child: _MetricTile(
-                label: '股息率',
+                label: _isFund ? '近12月分红率' : '股息率',
                 value: d.dividendYield != null
                     ? '${d.dividendYield!.toStringAsFixed(2)}%'
                     : '--',
                 color: d.dividendYield != null && d.dividendYield! >= 3
                     ? AppTheme.primaryGreen
                     : AppTheme.textPrimary)),
-        Expanded(
-            child: _MetricTile(
-                label: '股利支付率',
-                value: d.payoutRatio != null
-                    ? '${d.payoutRatio!.toStringAsFixed(2)}%'
-                    : '--')),
-        Expanded(
-            child: _MetricTile(
-                label: '派现融资比',
-                value: d.divFinRatio != null
-                    ? '${d.divFinRatio!.toStringAsFixed(2)}%'
-                    : '--',
-                color: d.divFinRatio != null && d.divFinRatio! >= 100
-                    ? AppTheme.primaryGreen
-                    : d.divFinRatio != null && d.divFinRatio! < 20
-                        ? AppTheme.riskRed
-                        : AppTheme.textPrimary)),
+        if (_isFund) ...[
+          Expanded(
+              child: _MetricTile(
+                  label: '分红次数', value: '${d.dividendCount}')),
+          Expanded(
+              child: _MetricTile(
+                  label: '累计每份',
+                  value: _fundCumPerShare(),
+                  color: AppTheme.accentGold)),
+        ] else ...[
+          Expanded(
+              child: _MetricTile(
+                  label: '股利支付率',
+                  value: d.payoutRatio != null
+                      ? '${d.payoutRatio!.toStringAsFixed(2)}%'
+                      : '--')),
+          Expanded(
+              child: _MetricTile(
+                  label: '派现融资比',
+                  value: d.divFinRatio != null
+                      ? '${d.divFinRatio!.toStringAsFixed(2)}%'
+                      : '--',
+                  color: d.divFinRatio != null && d.divFinRatio! >= 100
+                      ? AppTheme.primaryGreen
+                      : d.divFinRatio != null && d.divFinRatio! < 20
+                          ? AppTheme.riskRed
+                          : AppTheme.textPrimary)),
+        ],
       ]),
       const SizedBox(height: 14),
       Row(children: [
@@ -581,13 +602,15 @@ class _DividendFinancingCardState extends State<_DividendFinancingCard> {
       ]),
       if (d.records.isNotEmpty) ...[
         const SizedBox(height: 14),
-        const Text('分红送转',
-            style: TextStyle(
+        Text(_isFund ? '分红配送' : '分红送转',
+            style: const TextStyle(
                 color: AppTheme.textPrimary,
                 fontSize: 13,
                 fontWeight: FontWeight.w700)),
         const SizedBox(height: 10),
-        _DividendTable(records: d.records.take(6).toList()),
+        _DividendTable(
+            records: d.records.take(6).toList(),
+            isFund: _isFund),
       ] else ...[
         const SizedBox(height: 12),
         const _EmptyHint(text: '暂无分红送转记录'),
@@ -963,26 +986,36 @@ class _FinancingTable extends StatelessWidget {
 
 class _DividendTable extends StatelessWidget {
   final List<DividendRecord> records;
-  const _DividendTable({required this.records});
+  final bool isFund;
+  const _DividendTable({required this.records, this.isFund = false});
 
   @override
   Widget build(BuildContext context) {
     return Column(children: [
-      const Row(children: [
-        Expanded(flex: 3, child: _Th('报告期')),
-        Expanded(flex: 4, child: _Th('分红方案')),
-        Expanded(flex: 3, child: _Th('股权登记日')),
+      Row(children: [
+        Expanded(flex: 3, child: _Th(isFund ? '权益登记日' : '报告期')),
+        Expanded(flex: 4, child: _Th(isFund ? '除息日' : '分红方案')),
+        Expanded(flex: 3, child: _Th(isFund ? '单位分红' : '股权登记日')),
       ]),
       const SizedBox(height: 6),
       ...records.map((r) => Padding(
             padding: const EdgeInsets.symmetric(vertical: 6),
             child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(flex: 3, child: _Td(r.reportPeriod)),
-                  Expanded(flex: 4, child: _Td(r.plan)),
-                  Expanded(flex: 3, child: _Td(r.recordDate)),
-                ]),
+                children: isFund
+                    ? [
+                        Expanded(flex: 3, child: _Td(r.recordDate)),
+                        Expanded(flex: 4, child: _Td(r.exDate)),
+                        Expanded(
+                            flex: 3,
+                            child: _Td(
+                                '${(r.cashPer10 / 10).toStringAsFixed(3)}元')),
+                      ]
+                    : [
+                        Expanded(flex: 3, child: _Td(r.reportPeriod)),
+                        Expanded(flex: 4, child: _Td(r.plan)),
+                        Expanded(flex: 3, child: _Td(r.recordDate)),
+                      ]),
           )),
     ]);
   }

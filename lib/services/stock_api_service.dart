@@ -1471,60 +1471,18 @@ class StockApiService {
     return '${y - 1}年报';
   }
 
-  /// 基金分红：解析天天基金 pingzhongdata JS 中的 Data_netWorthTrend，
-  /// 其 unitMoney 字段形如「分红：每份派现金0.06元」。该文件与股票 datacenter
-  /// 不同源，移动端可稳定访问。基金无融资维度。
+  /// 基金分红：优先天天基金 F10 分红送配表（jjfh，含 权益登记日/除息日/分红发放日），
+  /// 缺失时回退 pingzhongdata（仅除息日+每份分红）。基金无融资/股利支付率维度。
   Future<DividendFinancingData> _fetchFundDividend(
       String code, String market, {double? price}) async {
     final notes = <String>[];
-    final records = <DividendRecord>[];
-    try {
-      final resp = await _dio.get(
-        'https://fund.eastmoney.com/pingzhongdata/$code.js',
-        options: Options(
-          responseType: ResponseType.plain,
-          headers: {'Referer': 'https://fund.eastmoney.com/$code.html'},
-        ),
-      );
-      final raw = resp.data?.toString() ?? '';
-      final m = RegExp(r'var\s+Data_netWorthTrend\s*=\s*(\[.*?\]);',
-              dotAll: true)
-          .firstMatch(raw);
-      if (m != null) {
-        final arr = jsonDecode(m.group(1)!);
-        if (arr is List) {
-          for (final e in arr.whereType<Map>()) {
-            final unit = (e['unitMoney'] ?? '').toString();
-            if (unit.isEmpty) continue;
-            final cash = _cashFromProfile(unit) == 0
-                ? (RegExp(r'([\d.]+)元').firstMatch(unit) != null
-                    ? double.tryParse(
-                            RegExp(r'([\d.]+)元').firstMatch(unit)!.group(1)!) ??
-                        0
-                    : 0)
-                : _cashFromProfile(unit);
-            if (cash <= 0) continue;
-            final ts = _n(e['x']);
-            final date = ts != null
-                ? DateTime.fromMillisecondsSinceEpoch(ts.toInt())
-                    .toIso8601String()
-                    .substring(0, 10)
-                : '';
-            records.add(DividendRecord(
-              reportPeriod: date.length >= 4 ? '${date.substring(0, 4)}年' : '-',
-              plan: '每份派现$cash元',
-              recordDate: date,
-              exDate: date,
-              cashPer10: cash * 10, // 每份→每10份口径，复用统计逻辑
-            ));
-          }
-        }
-      }
-      records.sort((a, b) => b.exDate.compareTo(a.exDate));
-      if (records.isNotEmpty) {
-        notes.add('基金分红数据来自天天基金（${records.length}次）');
-      }
-    } catch (e) { _log('基金分红[$code] pingzhongdata 异常: $e'); }
+    var records = await _fundDividendJjfh(code);
+    if (records.isNotEmpty) {
+      notes.add('基金分红数据来自天天基金F10（${records.length}次）');
+    } else {
+      records = await _fundDividendPingzhong(code);
+      if (records.isNotEmpty) notes.add('基金分红数据来自天天基金（${records.length}次）');
+    }
 
     // 收益率：最近12个月每份分红合计 / 最新净值(价格)
     double? dividendYield;
@@ -1551,6 +1509,101 @@ class StockApiService {
       sourceNotes: notes,
       isFund: true,
     );
+  }
+
+  /// 天天基金分红送配表：FundArchivesDatas.aspx?type=jjfh，返回内嵌 HTML 表格，
+  /// 列：年份 | 权益登记日 | 除息日 | 每份分红 | 分红发放日。
+  Future<List<DividendRecord>> _fundDividendJjfh(String code) async {
+    final records = <DividendRecord>[];
+    try {
+      final resp = await _dio.get(
+        'https://fundf10.eastmoney.com/FundArchivesDatas.aspx',
+        queryParameters: {'type': 'jjfh', 'code': code, 'page': 1, 'per': 60},
+        options: Options(
+          responseType: ResponseType.plain,
+          headers: {'Referer': 'https://fundf10.eastmoney.com/fhsp_$code.html'},
+        ),
+      );
+      final raw = resp.data?.toString() ?? '';
+      final cm = RegExp(r'content:"(.*?)",\s*records:', dotAll: true)
+          .firstMatch(raw);
+      final html = cm != null ? cm.group(1)! : raw;
+      for (final rowM in RegExp(r'<tr[^>]*>(.*?)</tr>', dotAll: true)
+          .allMatches(html)) {
+        final cells = RegExp(r'<td[^>]*>(.*?)</td>', dotAll: true)
+            .allMatches(rowM.group(1)!)
+            .map((m) => m.group(1)!
+                .replaceAll(RegExp(r'<[^>]+>'), '')
+                .replaceAll('&nbsp;', ' ')
+                .trim())
+            .toList();
+        if (cells.length < 4) continue;
+        final year = cells[0];
+        if (!RegExp(r'^\d{4}').hasMatch(year)) continue;
+        final reg = cells[1];
+        final ex = cells[2];
+        final cash = _cashFromProfile(cells[3]) == 0
+            ? (double.tryParse(
+                    RegExp(r'([\d.]+)').firstMatch(cells[3])?.group(1) ?? '') ??
+                0)
+            : _cashFromProfile(cells[3]);
+        if (cash <= 0) continue;
+        records.add(DividendRecord(
+          reportPeriod: year,
+          plan: '每份派现$cash元',
+          recordDate: _fmtDate(reg),
+          exDate: _fmtDate(ex),
+          cashPer10: cash * 10, // 每份→每10份口径，复用统计逻辑
+        ));
+      }
+    } catch (e) { _log('基金分红[$code] jjfh 异常: $e'); }
+    return records;
+  }
+
+  /// 回退源：pingzhongdata 的 Data_netWorthTrend.unitMoney，仅有除息日。
+  Future<List<DividendRecord>> _fundDividendPingzhong(String code) async {
+    final records = <DividendRecord>[];
+    try {
+      final resp = await _dio.get(
+        'https://fund.eastmoney.com/pingzhongdata/$code.js',
+        options: Options(
+          responseType: ResponseType.plain,
+          headers: {'Referer': 'https://fund.eastmoney.com/$code.html'},
+        ),
+      );
+      final raw = resp.data?.toString() ?? '';
+      final m = RegExp(r'var\s+Data_netWorthTrend\s*=\s*(\[.*?\]);',
+              dotAll: true)
+          .firstMatch(raw);
+      if (m != null) {
+        final arr = jsonDecode(m.group(1)!);
+        if (arr is List) {
+          for (final e in arr.whereType<Map>()) {
+            final unit = (e['unitMoney'] ?? '').toString();
+            if (unit.isEmpty) continue;
+            final cash = double.tryParse(
+                    RegExp(r'([\d.]+)元').firstMatch(unit)?.group(1) ?? '') ??
+                0;
+            if (cash <= 0) continue;
+            final ts = _n(e['x']);
+            final date = ts != null
+                ? DateTime.fromMillisecondsSinceEpoch(ts.toInt())
+                    .toIso8601String()
+                    .substring(0, 10)
+                : '';
+            records.add(DividendRecord(
+              reportPeriod: date.length >= 4 ? date.substring(0, 4) : '-',
+              plan: '每份派现$cash元',
+              recordDate: '-', // pingzhongdata 无权益登记日
+              exDate: date,
+              cashPer10: cash * 10,
+            ));
+          }
+        }
+      }
+    } catch (e) { _log('基金分红[$code] pingzhongdata 异常: $e'); }
+    records.sort((a, b) => b.exDate.compareTo(a.exDate));
+    return records;
   }
 
 
