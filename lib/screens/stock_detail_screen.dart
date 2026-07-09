@@ -872,8 +872,7 @@ class _MetricTile extends StatelessWidget {
   const _MetricTile(
       {required this.label,
       required this.value,
-      this.color,
-      this.isFund = false});
+      this.color}) : isFund = false;
 
   @override
   Widget build(BuildContext context) {
