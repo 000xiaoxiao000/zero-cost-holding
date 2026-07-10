@@ -49,9 +49,9 @@ class WatchlistNotifier extends StateNotifier<List<Watchlist>> {
         state.any((w) => w.targetPrice != null || w.alertPrice != null);
     final polling = AlertPollingService();
     if (hasAlerts) {
-      polling.start(watchlistGetter: () => state);
+      polling.updateWatchlist(watchlistGetter: () => state);
     } else {
-      polling.stop();
+      polling.updateWatchlist();
     }
   }
 }
@@ -167,9 +167,8 @@ final northboundProvider =
 
 // ── ATR Provider（14日 Wilder ATR，从 60 根日K自动计算）──────────────────────
 
-final atrProvider =
-    FutureProvider.autoDispose.family<double?, (String, String)>(
-        (ref, args) async {
+final atrProvider = FutureProvider.autoDispose
+    .family<double?, (String, String)>((ref, args) async {
   final klines =
       await StockApiService().fetchKlineDaily(args.$1, args.$2, limit: 60);
   return AtrService.calculate(klines);
@@ -177,15 +176,13 @@ final atrProvider =
 
 // ── 吊灯止盈参考高点 Provider（近 22 日最高价，从日K计算）───────────────────────
 
-final recentHighProvider =
-    FutureProvider.autoDispose.family<double?, (String, String)>(
-        (ref, args) async {
+final recentHighProvider = FutureProvider.autoDispose
+    .family<double?, (String, String)>((ref, args) async {
   final klines =
       await StockApiService().fetchKlineDaily(args.$1, args.$2, limit: 60);
   if (klines.isEmpty) return null;
-  final window = klines.length >= 22
-      ? klines.sublist(klines.length - 22)
-      : klines;
+  final window =
+      klines.length >= 22 ? klines.sublist(klines.length - 22) : klines;
   double? high;
   for (final k in window) {
     final h = k['high'];

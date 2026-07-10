@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/holding_batch.dart';
 import '../database/database_helper.dart';
+import '../services/alert_polling_service.dart';
 
 class HoldingPositionsNotifier
     extends StateNotifier<Map<String, List<HoldingBatch>>> {
@@ -33,6 +34,7 @@ class HoldingPositionsNotifier
     }
     _ledgers = ledgers;
     state = result;
+    _syncRecoverPolling();
   }
 
   Future<void> addBatch(HoldingBatch batch) async {
@@ -125,6 +127,16 @@ class HoldingPositionsNotifier
 
   double get totalRecovered =>
       holdings.fold(0.0, (s, h) => s + h.totalRecovered);
+
+  void _syncRecoverPolling() {
+    final polling = AlertPollingService();
+    final hasHoldingAlerts = holdings.any(polling.needsHoldingAlert);
+    if (hasHoldingAlerts) {
+      polling.updateHoldings(holdingGetter: () => holdings);
+    } else {
+      polling.updateHoldings();
+    }
+  }
 }
 
 final holdingPositionsProvider = StateNotifierProvider<HoldingPositionsNotifier,

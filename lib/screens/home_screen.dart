@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../navigation/app_navigation.dart';
+import '../providers/holding_providers.dart';
+import '../providers/stock_providers.dart';
 import '../theme/app_theme.dart';
 import 'watchlist_screen.dart';
 import 'holding_tracker_screen.dart';
@@ -8,14 +11,14 @@ import 'harvest_calculator_screen.dart';
 import 'seed_screening_screen.dart';
 import 'strategy_screen.dart';
 
-class HomeScreen extends StatefulWidget {
+class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
 
   @override
-  State<HomeScreen> createState() => _HomeScreenState();
+  ConsumerState<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends ConsumerState<HomeScreen> {
   // 5个底部标签：选股 / 排雷 / 计划 / 持仓 / 策略
   int _currentIndex = 0; // 默认进入「选股」
 
@@ -26,6 +29,10 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     AppNavigation.tabRequests.addListener(_handleTabRequest);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      ref.read(watchlistProvider.notifier).load();
+      ref.read(holdingPositionsProvider.notifier).load();
+    });
   }
 
   @override

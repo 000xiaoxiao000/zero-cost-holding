@@ -7,6 +7,153 @@ import '../models/watchlist.dart';
 import '../models/stock.dart';
 import 'stock_detail_screen.dart';
 
+Future<void> _showAlertEditor(
+  BuildContext context,
+  WidgetRef ref,
+  Watchlist item,
+) async {
+  if (item.id == null) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('自选股数据未完成保存，请稍后再试')),
+    );
+    return;
+  }
+
+  await showDialog<void>(
+    context: context,
+    builder: (_) => _AlertEditorDialog(item: item),
+  );
+}
+
+class _AlertEditorDialog extends ConsumerStatefulWidget {
+  final Watchlist item;
+
+  const _AlertEditorDialog({required this.item});
+
+  @override
+  ConsumerState<_AlertEditorDialog> createState() => _AlertEditorDialogState();
+}
+
+class _AlertEditorDialogState extends ConsumerState<_AlertEditorDialog> {
+  late final TextEditingController _targetController;
+  late final TextEditingController _alertController;
+  String? _errorText;
+
+  @override
+  void initState() {
+    super.initState();
+    _targetController = TextEditingController(
+      text: widget.item.targetPrice != null
+          ? widget.item.targetPrice!.toStringAsFixed(3)
+          : '',
+    );
+    _alertController = TextEditingController(
+      text: widget.item.alertPrice != null
+          ? widget.item.alertPrice!.toStringAsFixed(3)
+          : '',
+    );
+  }
+
+  @override
+  void dispose() {
+    _targetController.dispose();
+    _alertController.dispose();
+    super.dispose();
+  }
+
+  double? _parsePrice(String text) {
+    final value = text.trim();
+    if (value.isEmpty) return null;
+    return double.tryParse(value.replaceAll(',', ''));
+  }
+
+  Future<void> _save() async {
+    final target = _parsePrice(_targetController.text);
+    final alert = _parsePrice(_alertController.text);
+    final targetInvalid =
+        _targetController.text.trim().isNotEmpty && target == null;
+    final alertInvalid =
+        _alertController.text.trim().isNotEmpty && alert == null;
+    if (targetInvalid || alertInvalid) {
+      setState(() => _errorText = '请输入有效价格，或留空关闭对应提醒');
+      return;
+    }
+    if ((target != null && target <= 0) || (alert != null && alert <= 0)) {
+      setState(() => _errorText = '提醒价格必须大于 0');
+      return;
+    }
+
+    await ref
+        .read(watchlistProvider.notifier)
+        .updateTargets(widget.item.id!, target, alert);
+    ref.invalidate(watchlistQuotesProvider);
+    if (mounted) Navigator.pop(context);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: AppTheme.bgCard,
+      title: Text('${widget.item.stockName} 提醒价'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextField(
+            controller: _targetController,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            decoration: const InputDecoration(
+              labelText: '目标价',
+              hintText: '涨到此价格提醒收割',
+              prefixIcon: Icon(Icons.flag_outlined),
+            ),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _alertController,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            decoration: const InputDecoration(
+              labelText: '警戒价',
+              hintText: '跌到此价格提醒关注',
+              prefixIcon: Icon(Icons.warning_amber_outlined),
+            ),
+          ),
+          if (_errorText != null) ...[
+            const SizedBox(height: 10),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                _errorText!,
+                style: const TextStyle(
+                  color: AppTheme.riskRed,
+                  fontSize: 12,
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () {
+            _targetController.clear();
+            _alertController.clear();
+            setState(() => _errorText = null);
+          },
+          child: const Text('清空'),
+        ),
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: _save,
+          child: const Text('保存'),
+        ),
+      ],
+    );
+  }
+}
+
 class WatchlistScreen extends ConsumerStatefulWidget {
   const WatchlistScreen({super.key});
 
@@ -15,14 +162,6 @@ class WatchlistScreen extends ConsumerStatefulWidget {
 }
 
 class _WatchlistScreenState extends ConsumerState<WatchlistScreen> {
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      ref.read(watchlistProvider.notifier).load();
-    });
-  }
-
   @override
   Widget build(BuildContext context) {
     final watchlist = ref.watch(watchlistProvider);
@@ -91,6 +230,7 @@ class _WatchlistList extends ConsumerWidget {
           isLoading: isLoading,
           onRemove: () =>
               ref.read(watchlistProvider.notifier).remove(item.stockCode),
+          onEditAlerts: () => _showAlertEditor(context, ref, item),
           onTap: () => Navigator.push(
             context,
             MaterialPageRoute(
@@ -112,6 +252,7 @@ class _WatchlistTile extends StatelessWidget {
   final Stock? stock;
   final bool isLoading;
   final VoidCallback onRemove;
+  final VoidCallback onEditAlerts;
   final VoidCallback onTap;
 
   const _WatchlistTile({
@@ -119,6 +260,7 @@ class _WatchlistTile extends StatelessWidget {
     required this.stock,
     required this.isLoading,
     required this.onRemove,
+    required this.onEditAlerts,
     required this.onTap,
   });
 
@@ -127,6 +269,7 @@ class _WatchlistTile extends StatelessWidget {
     final price = stock?.price ?? 0.0;
     final pct = stock?.changePercent ?? 0.0;
     final priceColor = pct >= 0 ? AppTheme.accentGold : AppTheme.primaryGreen;
+    final hasAlerts = item.targetPrice != null || item.alertPrice != null;
 
     return Dismissible(
       key: Key(item.stockCode),
@@ -151,73 +294,154 @@ class _WatchlistTile extends StatelessWidget {
             borderRadius: BorderRadius.circular(12),
             border: Border.all(color: AppTheme.borderColor, width: 0.5),
           ),
-          child: Row(
+          child: Column(
             children: [
-              _StockAvatar(code: item.stockCode),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(item.stockName,
-                        style: const TextStyle(
-                            color: AppTheme.textPrimary,
-                            fontSize: 15,
-                            fontWeight: FontWeight.w600)),
-                    const SizedBox(height: 3),
-                    Row(
+              Row(
+                children: [
+                  _StockAvatar(code: item.stockCode),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        _MarketTag(market: item.market),
-                        const SizedBox(width: 6),
-                        Text(item.stockCode,
+                        Text(item.stockName,
                             style: const TextStyle(
-                                color: AppTheme.textMuted, fontSize: 11)),
+                                color: AppTheme.textPrimary,
+                                fontSize: 15,
+                                fontWeight: FontWeight.w600)),
+                        const SizedBox(height: 3),
+                        Row(
+                          children: [
+                            _MarketTag(market: item.market),
+                            const SizedBox(width: 6),
+                            Text(item.stockCode,
+                                style: const TextStyle(
+                                    color: AppTheme.textMuted, fontSize: 11)),
+                          ],
+                        ),
                       ],
                     ),
-                  ],
-                ),
-              ),
-              if (isLoading)
-                Container(
-                  width: 70,
-                  height: 36,
-                  decoration: BoxDecoration(
-                    color: AppTheme.bgCardLight,
-                    borderRadius: BorderRadius.circular(6),
                   ),
-                )
-              else
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Text(
-                      price > 0 ? Formatters.price(price) : '--',
-                      style: TextStyle(
-                        color: priceColor,
-                        fontSize: 17,
-                        fontWeight: FontWeight.w700,
-                      ),
+                  IconButton(
+                    tooltip: '设置提醒',
+                    icon: Icon(
+                      hasAlerts
+                          ? Icons.notifications_active
+                          : Icons.notifications_none_outlined,
+                      color:
+                          hasAlerts ? AppTheme.accentGold : AppTheme.textMuted,
+                      size: 21,
                     ),
-                    const SizedBox(height: 3),
+                    onPressed: onEditAlerts,
+                  ),
+                  if (isLoading)
                     Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 7, vertical: 2),
+                      width: 70,
+                      height: 36,
                       decoration: BoxDecoration(
-                        color: priceColor.withValues(alpha: 0.12),
-                        borderRadius: BorderRadius.circular(4),
+                        color: AppTheme.bgCardLight,
+                        borderRadius: BorderRadius.circular(6),
                       ),
-                      child: Text(
-                        price > 0 ? Formatters.percent(pct) : '--',
-                        style: TextStyle(
+                    )
+                  else
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text(
+                          price > 0 ? Formatters.price(price) : '--',
+                          style: TextStyle(
                             color: priceColor,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600),
-                      ),
+                            fontSize: 17,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(height: 3),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 7, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: priceColor.withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Text(
+                            price > 0 ? Formatters.percent(pct) : '--',
+                            style: TextStyle(
+                                color: priceColor,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                      ],
                     ),
+                ],
+              ),
+              if (hasAlerts) ...[
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    if (item.targetPrice != null)
+                      _AlertChip(
+                        icon: Icons.flag_outlined,
+                        label: '目标 ¥${Formatters.price(item.targetPrice!)}',
+                        color: AppTheme.accentGold,
+                      ),
+                    if (item.targetPrice != null && item.alertPrice != null)
+                      const SizedBox(width: 8),
+                    if (item.alertPrice != null)
+                      _AlertChip(
+                        icon: Icons.warning_amber_outlined,
+                        label: '警戒 ¥${Formatters.price(item.alertPrice!)}',
+                        color: AppTheme.riskRed,
+                      ),
                   ],
                 ),
+              ],
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AlertChip extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final Color color;
+
+  const _AlertChip({
+    required this.icon,
+    required this.label,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Flexible(
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: color.withValues(alpha: 0.28), width: 0.5),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, color: color, size: 13),
+            const SizedBox(width: 4),
+            Flexible(
+              child: Text(
+                label,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: color,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );

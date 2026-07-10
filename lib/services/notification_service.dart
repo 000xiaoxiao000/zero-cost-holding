@@ -38,9 +38,8 @@ class NotificationService {
 
   /// 请求 Android 13+ 通知权限（在 init 之后调用一次即可）
   Future<void> requestPermission() async {
-    final android = _plugin
-        .resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin>();
+    final android = _plugin.resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin>();
     await android?.requestNotificationsPermission();
   }
 
@@ -69,7 +68,8 @@ class NotificationService {
         await _send(
           id: code.hashCode & 0x7FFFFFFF,
           title: '收割提醒 · $name',
-          body: '现价 ¥${price.toStringAsFixed(3)} 已触及目标价 ¥${targetPrice.toStringAsFixed(3)}，可考虑按计划回收部分仓位',
+          body:
+              '现价 ¥${price.toStringAsFixed(3)} 已触及目标价 ¥${targetPrice.toStringAsFixed(3)}，可考虑按计划回收部分仓位',
           channelId: 'harvest',
           channelName: '收割提醒',
         );
@@ -84,13 +84,74 @@ class NotificationService {
         await _send(
           id: (code.hashCode + 1) & 0x7FFFFFFF,
           title: '警戒提醒 · $name',
-          body: '现价 ¥${price.toStringAsFixed(3)} 已触及警戒价 ¥${alertPrice.toStringAsFixed(3)}，请关注风险',
+          body:
+              '现价 ¥${price.toStringAsFixed(3)} 已触及警戒价 ¥${alertPrice.toStringAsFixed(3)}，请关注风险',
           channelId: 'alert',
           channelName: '警戒提醒',
         );
         _lastNotified[code] = _NotifyRecord(type: 'alert', time: now);
       }
     }
+  }
+
+  /// 检查播种账本批次，并在触及回收价时提醒按计划收割。
+  Future<void> checkRecoverAndNotify({
+    required String code,
+    required String name,
+    required int batchId,
+    required double price,
+    required double recoverPrice,
+    double? recoverQuantity,
+    String quantityUnit = '股',
+  }) async {
+    if (!_initialized || price <= 0 || recoverPrice <= 0) return;
+    if (price < recoverPrice) return;
+
+    final key = 'recover:$batchId';
+    final record = _lastNotified[key];
+    final now = DateTime.now();
+    if (!_canNotify(record, 'recover', now)) return;
+
+    final quantityText = recoverQuantity != null && recoverQuantity > 0
+        ? '，计划回收 ${_formatQuantity(recoverQuantity)}$quantityUnit'
+        : '';
+    await _send(
+      id: key.hashCode & 0x7FFFFFFF,
+      title: '回收触发 · $name',
+      body:
+          '现价 ¥${price.toStringAsFixed(3)} 已达到回收触发价 ¥${recoverPrice.toStringAsFixed(3)}$quantityText，可检查零成本收割计划',
+      channelId: 'recover',
+      channelName: '回收触发提醒',
+    );
+    _lastNotified[key] = _NotifyRecord(type: 'recover', time: now);
+  }
+
+  /// 检查播种计划下一档，并在触及灌溉价时提醒低吸检查。
+  Future<void> checkIrrigationAndNotify({
+    required String code,
+    required String name,
+    required String planKey,
+    required int batchIndex,
+    required double price,
+    required double irrigationPrice,
+  }) async {
+    if (!_initialized || price <= 0 || irrigationPrice <= 0) return;
+    if (price > irrigationPrice) return;
+
+    final key = 'irrigation:$planKey:$batchIndex';
+    final record = _lastNotified[key];
+    final now = DateTime.now();
+    if (!_canNotify(record, 'irrigation', now)) return;
+
+    await _send(
+      id: key.hashCode & 0x7FFFFFFF,
+      title: '灌溉提醒 · $name',
+      body:
+          '现价 ¥${price.toStringAsFixed(3)} 已达到第 $batchIndex 批灌溉价 ¥${irrigationPrice.toStringAsFixed(3)}，可检查播种计划',
+      channelId: 'irrigation',
+      channelName: '灌溉低吸提醒',
+    );
+    _lastNotified[key] = _NotifyRecord(type: 'irrigation', time: now);
   }
 
   bool _canNotify(_NotifyRecord? record, String type, DateTime now) {
@@ -127,6 +188,11 @@ class NotificationService {
     } catch (e) {
       dev.log('通知发送失败: $e', name: 'NotificationService');
     }
+  }
+
+  String _formatQuantity(double value) {
+    if (value == value.roundToDouble()) return value.toStringAsFixed(0);
+    return value.toStringAsFixed(2);
   }
 }
 
