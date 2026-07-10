@@ -161,7 +161,11 @@ class _HoldingTrackerScreenState extends ConsumerState<HoldingTrackerScreen> {
                 else
                   ...visibleHoldings.map((h) => Padding(
                         padding: const EdgeInsets.only(bottom: 12),
-                        child: _HoldingCard(position: h),
+                        child: _HoldingCard(
+                          key: ValueKey(
+                              '${h.assetType}-${h.market}-${h.stockCode}'),
+                          position: h,
+                        ),
                       )),
                 const SizedBox(height: 80),
               ],
@@ -579,15 +583,28 @@ class _NoFilteredHolding extends StatelessWidget {
   }
 }
 
-class _HoldingCard extends ConsumerWidget {
+class _HoldingCard extends ConsumerStatefulWidget {
   final HoldingPosition position;
-  const _HoldingCard({required this.position});
+  const _HoldingCard({super.key, required this.position});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_HoldingCard> createState() => _HoldingCardState();
+}
+
+class _HoldingCardState extends ConsumerState<_HoldingCard>
+    with SingleTickerProviderStateMixin {
+  bool _recordsExpanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final position = widget.position;
     final progress = position.zeroCostProgress;
     final progressColor =
         position.isZeroCost ? AppTheme.accentGold : AppTheme.accent;
+    final hasMultipleBatches = position.batches.length > 1;
+    final visibleBatches = hasMultipleBatches && !_recordsExpanded
+        ? position.batches.take(1).toList()
+        : position.batches;
 
     return Container(
       decoration: BoxDecoration(
@@ -711,11 +728,29 @@ class _HoldingCard extends ConsumerWidget {
           const Divider(height: 20, indent: 16, endIndent: 16),
           _FlowActionRow(position: position),
           const Divider(height: 20, indent: 16, endIndent: 16),
-          ...position.batches.map(
-            (b) => _BatchRow(
-              batch: b,
+          if (position.batches.isNotEmpty) ...[
+            _BatchRecordsHeader(
+              count: position.batches.length,
+              expanded: _recordsExpanded,
+              canToggle: hasMultipleBatches,
+              onToggle: () =>
+                  setState(() => _recordsExpanded = !_recordsExpanded),
             ),
-          ),
+            AnimatedSize(
+              duration: const Duration(milliseconds: 180),
+              curve: Curves.easeOutCubic,
+              alignment: Alignment.topCenter,
+              child: Column(
+                children: visibleBatches
+                    .map(
+                      (b) => _BatchRow(
+                        batch: b,
+                      ),
+                    )
+                    .toList(),
+              ),
+            ),
+          ],
           if (position.batches.isEmpty)
             const Padding(
               padding: EdgeInsets.fromLTRB(16, 0, 16, 8),
@@ -763,6 +798,70 @@ class _HoldingCard extends ConsumerWidget {
           market: position.market,
           stockCode: position.stockCode,
         );
+  }
+}
+
+class _BatchRecordsHeader extends StatelessWidget {
+  final int count;
+  final bool expanded;
+  final bool canToggle;
+  final VoidCallback onToggle;
+
+  const _BatchRecordsHeader({
+    required this.count,
+    required this.expanded,
+    required this.canToggle,
+    required this.onToggle,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final hiddenCount = count - 1;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 10, 2),
+      child: Row(
+        children: [
+          const Icon(Icons.format_list_bulleted,
+              size: 15, color: AppTheme.textMuted),
+          const SizedBox(width: 6),
+          Text(
+            '播种记录 $count 条',
+            style: const TextStyle(
+              color: AppTheme.textMuted,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          if (canToggle && !expanded) ...[
+            const SizedBox(width: 8),
+            Text(
+              '已收起 $hiddenCount 条',
+              style: const TextStyle(
+                color: AppTheme.textMuted,
+                fontSize: 11,
+              ),
+            ),
+          ],
+          const Spacer(),
+          if (canToggle)
+            TextButton.icon(
+              onPressed: onToggle,
+              style: TextButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                minimumSize: const Size(0, 30),
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              icon: Icon(
+                expanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
+                size: 18,
+              ),
+              label: Text(expanded ? '收起' : '展开'),
+            ),
+        ],
+      ),
+    );
   }
 }
 
