@@ -1448,91 +1448,94 @@ class _RecoverDialogState extends State<_RecoverDialog> {
       title: Text(_isCorrection ? '修正回收' : '记录回收'),
       content: SizedBox(
         width: 360,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              '${batch.assetTypeLabel} · ${batch.stockName} ${batch.stockCode}',
-              style:
-                  const TextStyle(color: AppTheme.textSecondary, fontSize: 13),
-            ),
-            const SizedBox(height: 14),
-            TextField(
-              controller: _priceController,
-              onChanged: (_) {
-                _syncAmountFromPriceQty();
-                setState(() {});
-              },
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
-              inputFormatters: [
-                if (batch.isFund)
-                  FilteringTextInputFormatter.allow(RegExp(r'^\d+\.?\d{0,4}'))
-                else
-                  FilteringTextInputFormatter.allow(RegExp(r'^\d+\.?\d{0,3}')),
-              ],
-              decoration: InputDecoration(
-                labelText: batch.isFund ? '回收确认净值' : '回收参考价格',
-                errorText: _priceError,
-              ),
-            ),
-            _DialogHelpText(
-              '已带入播种计划回收触发价 ¥${Formatters.price(_plannedRecoverPrice)}',
-            ),
-            const SizedBox(height: 12),
-            _DialogDateField(
-              date: _sellDate,
-              onTap: _pickSellDate,
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _qtyController,
-              onChanged: (_) {
-                _syncAmountFromPriceQty();
-                setState(() {});
-              },
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
-              inputFormatters: [
-                FilteringTextInputFormatter.digitsOnly,
-              ],
-              decoration: InputDecoration(
-                labelText: batch.isFund ? '本次回收份额' : '本次回收股数',
-                errorText: _quantityError,
-              ),
-            ),
-            _DialogHelpText(
-              _isCorrection
-                  ? '修正累计回收数量，最多 ${Formatters.quantity(batch.quantity)} ${batch.quantityUnit}'
-                  : '已带入计划回收 ${Formatters.quantity(_initialRecoverQuantity)} ${batch.quantityUnit}，当前剩余 ${Formatters.quantity(batch.remainingQuantity)} ${batch.quantityUnit}',
-            ),
-            if (!_isCorrection) ...[
-              const SizedBox(height: 6),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
               Text(
-                '计划保留种子 ${Formatters.quantity(_plannedFreeQuantity)} ${batch.quantityUnit}',
-                style:
-                    const TextStyle(color: AppTheme.accentGold, fontSize: 12),
+                '${batch.assetTypeLabel} · ${batch.stockName} ${batch.stockCode}',
+                style: const TextStyle(
+                    color: AppTheme.textSecondary, fontSize: 13),
               ),
-            ],
-            const SizedBox(height: 12),
-            TextField(
-              controller: _amountController,
-              onChanged: (_) {
-                _syncQtyFromAmount();
-                setState(() {});
-              },
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
-              inputFormatters: [
-                FilteringTextInputFormatter.allow(RegExp(r'^\d+\.?\d{0,2}')),
+              const SizedBox(height: 14),
+              TextField(
+                controller: _priceController,
+                onChanged: (_) {
+                  _syncAmountFromPriceQty();
+                  setState(() {});
+                },
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true),
+                inputFormatters: [
+                  if (batch.isFund)
+                    FilteringTextInputFormatter.allow(RegExp(r'^\d+\.?\d{0,4}'))
+                  else
+                    FilteringTextInputFormatter.allow(
+                        RegExp(r'^\d+\.?\d{0,3}')),
+                ],
+                decoration: InputDecoration(
+                  labelText: batch.isFund ? '回收确认净值' : '回收参考价格',
+                  errorText: _priceError,
+                ),
+              ),
+              _DialogHelpText(
+                '已带入播种计划回收触发价 ¥${Formatters.price(_plannedRecoverPrice)}',
+              ),
+              const SizedBox(height: 12),
+              _DialogDateField(
+                date: _sellDate,
+                onTap: _pickSellDate,
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _qtyController,
+                onChanged: (_) {
+                  _syncAmountFromPriceQty();
+                  setState(() {});
+                },
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true),
+                inputFormatters: [
+                  FilteringTextInputFormatter.digitsOnly,
+                ],
+                decoration: InputDecoration(
+                  labelText: batch.isFund ? '本次回收份额' : '本次回收股数',
+                  errorText: _quantityError,
+                ),
+              ),
+              _DialogHelpText(
+                _isCorrection
+                    ? '修正累计回收数量，最多 ${Formatters.quantity(batch.quantity)} ${batch.quantityUnit}'
+                    : '已带入计划回收 ${Formatters.quantity(_initialRecoverQuantity)} ${batch.quantityUnit}，当前剩余 ${Formatters.quantity(batch.remainingQuantity)} ${batch.quantityUnit}',
+              ),
+              if (!_isCorrection) ...[
+                const SizedBox(height: 6),
+                Text(
+                  '计划保留种子 ${Formatters.quantity(_plannedFreeQuantity)} ${batch.quantityUnit}',
+                  style:
+                      const TextStyle(color: AppTheme.accentGold, fontSize: 12),
+                ),
               ],
-              decoration: const InputDecoration(
-                labelText: '回收金额',
+              const SizedBox(height: 12),
+              TextField(
+                controller: _amountController,
+                onChanged: (_) {
+                  _syncQtyFromAmount();
+                  setState(() {});
+                },
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true),
+                inputFormatters: [
+                  FilteringTextInputFormatter.allow(RegExp(r'^\d+\.?\d{0,2}')),
+                ],
+                decoration: const InputDecoration(
+                  labelText: '回收金额',
+                ),
               ),
-            ),
-            const _DialogHelpText('录入金额后按价格自动反算可回收数量'),
-          ],
+              const _DialogHelpText('录入金额后按价格自动反算可回收数量'),
+            ],
+          ),
         ),
       ),
       actions: [
