@@ -68,14 +68,16 @@ class _AlertEditorDialogState extends ConsumerState<_AlertEditorDialog> {
   }
 
   Future<void> _save() async {
-    final target = _parsePrice(_targetController.text);
-    final alert = _parsePrice(_alertController.text);
-    final targetInvalid =
-        _targetController.text.trim().isNotEmpty && target == null;
-    final alertInvalid =
-        _alertController.text.trim().isNotEmpty && alert == null;
+    final targetText = _targetController.text.trim();
+    final alertText = _alertController.text.trim();
+    final target =
+        targetText.isEmpty ? widget.item.targetPrice : _parsePrice(targetText);
+    final alert =
+        alertText.isEmpty ? widget.item.alertPrice : _parsePrice(alertText);
+    final targetInvalid = targetText.isNotEmpty && target == null;
+    final alertInvalid = alertText.isNotEmpty && alert == null;
     if (targetInvalid || alertInvalid) {
-      setState(() => _errorText = '请输入有效价格，或留空关闭对应提醒');
+      setState(() => _errorText = '请输入有效价格');
       return;
     }
     if ((target != null && target <= 0) || (alert != null && alert <= 0)) {
@@ -133,14 +135,6 @@ class _AlertEditorDialogState extends ConsumerState<_AlertEditorDialog> {
         ],
       ),
       actions: [
-        TextButton(
-          onPressed: () {
-            _targetController.clear();
-            _alertController.clear();
-            setState(() => _errorText = null);
-          },
-          child: const Text('清空'),
-        ),
         TextButton(
           onPressed: () => Navigator.pop(context),
           child: const Text('取消'),
@@ -310,13 +304,29 @@ class _WatchlistTile extends StatelessWidget {
                                 fontSize: 15,
                                 fontWeight: FontWeight.w600)),
                         const SizedBox(height: 3),
-                        Row(
+                        Wrap(
+                          spacing: 6,
+                          runSpacing: 5,
+                          crossAxisAlignment: WrapCrossAlignment.center,
                           children: [
                             _MarketTag(market: item.market),
-                            const SizedBox(width: 6),
                             Text(item.stockCode,
                                 style: const TextStyle(
                                     color: AppTheme.textMuted, fontSize: 11)),
+                            if (item.targetPrice != null)
+                              _AlertChip(
+                                icon: Icons.flag_outlined,
+                                label:
+                                    '目标 ¥${Formatters.price(item.targetPrice!)}',
+                                color: AppTheme.accentGold,
+                              ),
+                            if (item.alertPrice != null)
+                              _AlertChip(
+                                icon: Icons.warning_amber_outlined,
+                                label:
+                                    '警戒 ¥${Formatters.price(item.alertPrice!)}',
+                                color: AppTheme.riskRed,
+                              ),
                           ],
                         ),
                       ],
@@ -375,27 +385,6 @@ class _WatchlistTile extends StatelessWidget {
                     ),
                 ],
               ),
-              if (hasAlerts) ...[
-                const SizedBox(height: 10),
-                Row(
-                  children: [
-                    if (item.targetPrice != null)
-                      _AlertChip(
-                        icon: Icons.flag_outlined,
-                        label: '目标 ¥${Formatters.price(item.targetPrice!)}',
-                        color: AppTheme.accentGold,
-                      ),
-                    if (item.targetPrice != null && item.alertPrice != null)
-                      const SizedBox(width: 8),
-                    if (item.alertPrice != null)
-                      _AlertChip(
-                        icon: Icons.warning_amber_outlined,
-                        label: '警戒 ¥${Formatters.price(item.alertPrice!)}',
-                        color: AppTheme.riskRed,
-                      ),
-                  ],
-                ),
-              ],
             ],
           ),
         ),
@@ -417,32 +406,31 @@ class _AlertChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Flexible(
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-        decoration: BoxDecoration(
-          color: color.withValues(alpha: 0.12),
-          borderRadius: BorderRadius.circular(6),
-          border: Border.all(color: color.withValues(alpha: 0.28), width: 0.5),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, color: color, size: 13),
-            const SizedBox(width: 4),
-            Flexible(
-              child: Text(
-                label,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: color,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                ),
+    return Container(
+      constraints: const BoxConstraints(maxWidth: 130),
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: color.withValues(alpha: 0.28), width: 0.5),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: color, size: 12),
+          const SizedBox(width: 4),
+          Flexible(
+            child: Text(
+              label,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: color,
+                fontSize: 10.5,
+                fontWeight: FontWeight.w600,
               ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -715,6 +716,7 @@ class _HoldingCard extends ConsumerWidget {
           ...position.batches.map(
             (b) => _BatchRow(
               batch: b,
+              position: position,
             ),
           ),
           if (position.batches.isEmpty)
@@ -946,9 +948,11 @@ class _IdempotentIconButtonState extends State<_IdempotentIconButton> {
 
 class _BatchRow extends ConsumerWidget {
   final HoldingBatch batch;
+  final HoldingPosition position;
 
   const _BatchRow({
     required this.batch,
+    required this.position,
   });
 
   @override
@@ -965,6 +969,11 @@ class _BatchRow extends ConsumerWidget {
         : batch.isFullySold
             ? AppTheme.textMuted
             : AppTheme.accent;
+    final reminderStatuses = [
+      if (_recoverReminderStatus(ref, batch) case final status?) status,
+      if (_irrigationReminderStatus(ref, position, batch) case final status?)
+        status,
+    ];
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       child: Column(
@@ -1047,6 +1056,17 @@ class _BatchRow extends ConsumerWidget {
                           fontSize: 12,
                           height: 1.35,
                         ),
+                      ),
+                    ],
+                    if (reminderStatuses.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 6,
+                        children: reminderStatuses
+                            .map(
+                                (status) => _ReminderStatusChip(status: status))
+                            .toList(),
                       ),
                     ],
                   ],
@@ -1988,6 +2008,232 @@ class _DialogField extends StatelessWidget {
       keyboardType: keyboardType,
       style: const TextStyle(color: AppTheme.textPrimary, fontSize: 13),
       decoration: InputDecoration(labelText: label),
+    );
+  }
+}
+
+_ReminderStatus? _recoverReminderStatus(WidgetRef ref, HoldingBatch batch) {
+  final price = batch.planRecoverPrice;
+  if (price == null || price <= 0) return null;
+  if (batch.isZeroCost) {
+    return const _ReminderStatus(
+      icon: Icons.check_circle_outline,
+      text: '回收提醒已停止：已零成本',
+      color: AppTheme.accentGold,
+    );
+  }
+  if (batch.remainingQuantity <= 0) {
+    return const _ReminderStatus(
+      icon: Icons.notifications_off_outlined,
+      text: '回收提醒已停止：无剩余仓位',
+      color: AppTheme.textMuted,
+    );
+  }
+  final quantity = batch.planRecoverQuantity;
+  final quantityText = quantity != null && quantity > 0
+      ? ' · 计划 ${Formatters.quantity(quantity)}${batch.quantityUnit}'
+      : '';
+  if (!batch.recoverAlertEnabled) {
+    return _ReminderStatus(
+      icon: Icons.notifications_off_outlined,
+      text: '回收提醒已关闭 ¥${Formatters.price(price)}',
+      color: AppTheme.textMuted,
+      onTap: batch.id == null
+          ? null
+          : () => ref
+              .read(holdingPositionsProvider.notifier)
+              .updateBatchAlertToggles(
+                batch.id!,
+                recoverAlertEnabled: true,
+              ),
+    );
+  }
+  return _ReminderStatus(
+    icon: Icons.notifications_active_outlined,
+    text: '回收提醒 ¥${Formatters.price(price)}$quantityText',
+    color: AppTheme.accentGold,
+    onTap: batch.id == null
+        ? null
+        : () =>
+            ref.read(holdingPositionsProvider.notifier).updateBatchAlertToggles(
+                  batch.id!,
+                  recoverAlertEnabled: false,
+                ),
+  );
+}
+
+_ReminderStatus? _irrigationReminderStatus(
+  WidgetRef ref,
+  HoldingPosition position,
+  HoldingBatch batch,
+) {
+  final plan = _IrrigationPlanView.fromBatch(batch);
+  if (plan == null) return null;
+
+  var maxRecordedIndex = plan.index;
+  for (final other in position.batches) {
+    final otherPlan = _IrrigationPlanView.fromBatch(other);
+    if (otherPlan == null || !plan.samePlan(otherPlan)) continue;
+    maxRecordedIndex = math.max(maxRecordedIndex, otherPlan.index);
+  }
+  if (batch.planBatchIndex != maxRecordedIndex) return null;
+
+  final nextIndex = maxRecordedIndex + 1;
+  if (nextIndex > plan.seedCount) {
+    return const _ReminderStatus(
+      icon: Icons.check_circle_outline,
+      text: '灌溉提醒已停止：计划已完成',
+      color: AppTheme.textMuted,
+    );
+  }
+
+  final nextPrice =
+      plan.startPrice * math.pow(1 - plan.dropStepPct / 100, nextIndex - 1);
+  if (nextPrice <= 0) return null;
+  final label = '第 $nextIndex 批 ¥${Formatters.price(nextPrice.toDouble())}';
+  if (!batch.irrigationAlertEnabled) {
+    return _ReminderStatus(
+      icon: Icons.water_drop_outlined,
+      text: '灌溉提醒已关闭 $label',
+      color: AppTheme.textMuted,
+      onTap: batch.id == null
+          ? null
+          : () => ref
+              .read(holdingPositionsProvider.notifier)
+              .updateBatchAlertToggles(
+                batch.id!,
+                irrigationAlertEnabled: true,
+              ),
+    );
+  }
+  return _ReminderStatus(
+    icon: Icons.water_drop_outlined,
+    text: '灌溉提醒 $label',
+    color: AppTheme.accent,
+    onTap: batch.id == null
+        ? null
+        : () =>
+            ref.read(holdingPositionsProvider.notifier).updateBatchAlertToggles(
+                  batch.id!,
+                  irrigationAlertEnabled: false,
+                ),
+  );
+}
+
+class _IrrigationPlanView {
+  final String assetType;
+  final String market;
+  final String stockCode;
+  final double startPrice;
+  final int seedCount;
+  final double dropStepPct;
+  final int index;
+
+  const _IrrigationPlanView({
+    required this.assetType,
+    required this.market,
+    required this.stockCode,
+    required this.startPrice,
+    required this.seedCount,
+    required this.dropStepPct,
+    required this.index,
+  });
+
+  static _IrrigationPlanView? fromBatch(HoldingBatch batch) {
+    final startPrice = batch.planStartPrice;
+    final seedCount = batch.planSeedCount;
+    final dropStepPct = batch.planDropStep;
+    final index = batch.planBatchIndex;
+    if (startPrice == null ||
+        startPrice <= 0 ||
+        seedCount == null ||
+        seedCount <= 0 ||
+        dropStepPct == null ||
+        dropStepPct <= 0 ||
+        dropStepPct >= 100 ||
+        index == null ||
+        index <= 0) {
+      return null;
+    }
+    return _IrrigationPlanView(
+      assetType: batch.assetType,
+      market: batch.market,
+      stockCode: batch.stockCode,
+      startPrice: startPrice,
+      seedCount: seedCount,
+      dropStepPct: dropStepPct,
+      index: index,
+    );
+  }
+
+  bool samePlan(_IrrigationPlanView other) {
+    return assetType == other.assetType &&
+        market == other.market &&
+        stockCode == other.stockCode &&
+        seedCount == other.seedCount &&
+        (startPrice - other.startPrice).abs() <= 0.0001 &&
+        (dropStepPct - other.dropStepPct).abs() <= 0.0001;
+  }
+}
+
+class _ReminderStatus {
+  final IconData icon;
+  final String text;
+  final Color color;
+  final VoidCallback? onTap;
+
+  const _ReminderStatus({
+    required this.icon,
+    required this.text,
+    required this.color,
+    this.onTap,
+  });
+}
+
+class _ReminderStatusChip extends StatelessWidget {
+  final _ReminderStatus status;
+
+  const _ReminderStatusChip({required this.status});
+
+  @override
+  Widget build(BuildContext context) {
+    final chip = Container(
+      constraints: const BoxConstraints(maxWidth: 260),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      decoration: BoxDecoration(
+        color: status.color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(
+          color: status.color.withValues(alpha: 0.28),
+          width: 0.5,
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(status.icon, color: status.color, size: 13),
+          const SizedBox(width: 4),
+          Flexible(
+            child: Text(
+              status.text,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: status.color,
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                height: 1.25,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (status.onTap == null) return chip;
+    return InkWell(
+      onTap: status.onTap,
+      borderRadius: BorderRadius.circular(6),
+      child: chip,
     );
   }
 }

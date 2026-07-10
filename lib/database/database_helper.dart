@@ -18,7 +18,7 @@ class DatabaseHelper {
     final path = join(dbPath, 'stock_holding.db');
     return await openDatabase(
       path,
-      version: 10,
+      version: 11,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
       onOpen: _ensureSchema,
@@ -61,6 +61,8 @@ class DatabaseHelper {
         plan_commission REAL,
         plan_weight_mode TEXT,
         plan_batch_index INTEGER,
+        recover_alert_enabled INTEGER DEFAULT 1,
+        irrigation_alert_enabled INTEGER DEFAULT 1,
         cash_income REAL DEFAULT 0.0,
         sell_price REAL,
         sell_quantity REAL,
@@ -134,6 +136,9 @@ class DatabaseHelper {
     if (oldVersion < 10) {
       await _ensureHoldingLedgers(db);
     }
+    if (oldVersion < 11) {
+      await _ensureAlertToggleColumns(db);
+    }
   }
 
   Future<void> _ensureSchema(Database db) async {
@@ -174,7 +179,23 @@ class DatabaseHelper {
       column: 'plan_batch_index',
       definition: 'INTEGER',
     );
+    await _ensureAlertToggleColumns(db);
     await _ensureHoldingLedgers(db);
+  }
+
+  Future<void> _ensureAlertToggleColumns(Database db) async {
+    await _addColumnIfMissing(
+      db,
+      table: 'holding_batches',
+      column: 'recover_alert_enabled',
+      definition: 'INTEGER DEFAULT 1',
+    );
+    await _addColumnIfMissing(
+      db,
+      table: 'holding_batches',
+      column: 'irrigation_alert_enabled',
+      definition: 'INTEGER DEFAULT 1',
+    );
   }
 
   Future<void> _createHoldingLedgersTable(Database db) async {

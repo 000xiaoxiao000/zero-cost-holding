@@ -81,6 +81,23 @@ class HoldingPositionsNotifier
     await load();
   }
 
+  Future<void> updateBatchAlertToggles(
+    int batchId, {
+    bool? recoverAlertEnabled,
+    bool? irrigationAlertEnabled,
+  }) async {
+    final data = <String, dynamic>{};
+    if (recoverAlertEnabled != null) {
+      data['recover_alert_enabled'] = recoverAlertEnabled ? 1 : 0;
+    }
+    if (irrigationAlertEnabled != null) {
+      data['irrigation_alert_enabled'] = irrigationAlertEnabled ? 1 : 0;
+    }
+    if (data.isEmpty) return;
+    await _db.updateHoldingBatch(batchId, data);
+    await load();
+  }
+
   Future<void> deleteBatch(int id) async {
     await _db.deleteHoldingBatch(id);
     await load();

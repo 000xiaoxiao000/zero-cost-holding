@@ -20,6 +20,8 @@ class HoldingBatch {
   final double? planCommission;
   final String? planWeightModeKey;
   final int? planBatchIndex;
+  final bool recoverAlertEnabled;
+  final bool irrigationAlertEnabled;
   final double cashIncome;
   double? sellPrice;
   double? sellQuantity;
@@ -46,6 +48,8 @@ class HoldingBatch {
     this.planCommission,
     this.planWeightModeKey,
     this.planBatchIndex,
+    this.recoverAlertEnabled = true,
+    this.irrigationAlertEnabled = true,
     this.cashIncome = 0.0,
     this.sellPrice,
     this.sellQuantity,
@@ -130,6 +134,8 @@ class HoldingBatch {
       'plan_commission': planCommission,
       'plan_weight_mode': planWeightModeKey,
       'plan_batch_index': planBatchIndex,
+      'recover_alert_enabled': recoverAlertEnabled ? 1 : 0,
+      'irrigation_alert_enabled': irrigationAlertEnabled ? 1 : 0,
       'cash_income': cashIncome,
       'sell_price': sellPrice,
       'sell_quantity': sellQuantity,
@@ -159,6 +165,8 @@ class HoldingBatch {
       planCommission: map['plan_commission']?.toDouble(),
       planWeightModeKey: map['plan_weight_mode'],
       planBatchIndex: map['plan_batch_index'],
+      recoverAlertEnabled: (map['recover_alert_enabled'] ?? 1) != 0,
+      irrigationAlertEnabled: (map['irrigation_alert_enabled'] ?? 1) != 0,
       cashIncome: (map['cash_income'] ?? 0.0).toDouble(),
       sellPrice: map['sell_price']?.toDouble(),
       sellQuantity: map['sell_quantity']?.toDouble(),
@@ -174,6 +182,8 @@ class HoldingBatch {
     DateTime? sellDate,
     String? note,
     double? cashIncome,
+    bool? recoverAlertEnabled,
+    bool? irrigationAlertEnabled,
   }) {
     return HoldingBatch(
       id: id ?? this.id,
@@ -196,6 +206,9 @@ class HoldingBatch {
       planCommission: planCommission,
       planWeightModeKey: planWeightModeKey,
       planBatchIndex: planBatchIndex,
+      recoverAlertEnabled: recoverAlertEnabled ?? this.recoverAlertEnabled,
+      irrigationAlertEnabled:
+          irrigationAlertEnabled ?? this.irrigationAlertEnabled,
       cashIncome: cashIncome ?? this.cashIncome,
       sellPrice: sellPrice ?? this.sellPrice,
       sellQuantity: sellQuantity ?? this.sellQuantity,

@@ -157,6 +157,7 @@ class AlertPollingService {
   bool _needsRecoverAlert(HoldingBatch batch) {
     final price = batch.planRecoverPrice;
     return batch.id != null &&
+        batch.recoverAlertEnabled &&
         price != null &&
         price > 0 &&
         batch.remainingQuantity > 0 &&
@@ -178,6 +179,7 @@ class AlertPollingService {
 
     _IrrigationAlert? next;
     for (final plan in plans.values) {
+      if (!plan.enabled) continue;
       final nextIndex = plan.maxRecordedIndex + 1;
       if (nextIndex > plan.seedCount) continue;
       final price =
@@ -216,6 +218,7 @@ class _IrrigationPlan {
   final int seedCount;
   final double dropStepPct;
   final int maxRecordedIndex;
+  final bool enabled;
 
   const _IrrigationPlan({
     required this.key,
@@ -223,6 +226,7 @@ class _IrrigationPlan {
     required this.seedCount,
     required this.dropStepPct,
     required this.maxRecordedIndex,
+    required this.enabled,
   });
 
   static _IrrigationPlan? fromBatch(HoldingBatch batch) {
@@ -248,6 +252,7 @@ class _IrrigationPlan {
       seedCount: seedCount,
       dropStepPct: dropStepPct,
       maxRecordedIndex: index,
+      enabled: batch.irrigationAlertEnabled,
     );
   }
 }
