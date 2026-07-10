@@ -18,7 +18,7 @@ class DatabaseHelper {
     final path = join(dbPath, 'stock_holding.db');
     return await openDatabase(
       path,
-      version: 9,
+      version: 10,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
       onOpen: _ensureSchema,
@@ -67,6 +67,8 @@ class DatabaseHelper {
         sell_date TEXT
       )
     ''');
+
+    await _createHoldingLedgersTable(db);
 
     await db.execute('''
       CREATE INDEX idx_holding_batches_code ON holding_batches(stock_code)
@@ -129,6 +131,9 @@ class DatabaseHelper {
         definition: 'INTEGER',
       );
     }
+    if (oldVersion < 10) {
+      await _ensureHoldingLedgers(db);
+    }
   }
 
   Future<void> _ensureSchema(Database db) async {
@@ -169,6 +174,42 @@ class DatabaseHelper {
       column: 'plan_batch_index',
       definition: 'INTEGER',
     );
+    await _ensureHoldingLedgers(db);
+  }
+
+  Future<void> _createHoldingLedgersTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS holding_ledgers (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        asset_type TEXT NOT NULL DEFAULT 'stock',
+        market TEXT NOT NULL DEFAULT 'SH',
+        stock_code TEXT NOT NULL,
+        stock_name TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        UNIQUE(asset_type, market, stock_code)
+      )
+    ''');
+  }
+
+  Future<void> _ensureHoldingLedgers(Database db) async {
+    await _createHoldingLedgersTable(db);
+    await db.execute('''
+      INSERT OR IGNORE INTO holding_ledgers (
+        asset_type,
+        market,
+        stock_code,
+        stock_name,
+        created_at
+      )
+      SELECT
+        asset_type,
+        market,
+        stock_code,
+        stock_name,
+        MIN(buy_date)
+      FROM holding_batches
+      GROUP BY asset_type, market, stock_code
+    ''');
   }
 
   Future<void> _ensurePlanSnapshotColumns(Database db) async {
@@ -289,6 +330,7 @@ class DatabaseHelper {
 
   Future<int> addHoldingBatch(Map<String, dynamic> data) async {
     final db = await database;
+    await upsertHoldingLedger(data);
     return db.insert('holding_batches', data);
   }
 
@@ -310,6 +352,39 @@ class DatabaseHelper {
     final db = await database;
     return db.delete(
       'holding_batches',
+      where: 'asset_type = ? AND market = ? AND stock_code = ?',
+      whereArgs: [assetType, market, stockCode],
+    );
+  }
+
+  Future<List<Map<String, dynamic>>> getHoldingLedgers() async {
+    final db = await database;
+    return db.query('holding_ledgers', orderBy: 'created_at DESC');
+  }
+
+  Future<int> upsertHoldingLedger(Map<String, dynamic> data) async {
+    final db = await database;
+    return db.insert(
+      'holding_ledgers',
+      {
+        'asset_type': data['asset_type'] ?? 'stock',
+        'market': data['market'] ?? 'SH',
+        'stock_code': data['stock_code'],
+        'stock_name': data['stock_name'],
+        'created_at': data['buy_date'] ?? DateTime.now().toIso8601String(),
+      },
+      conflictAlgorithm: ConflictAlgorithm.ignore,
+    );
+  }
+
+  Future<int> deleteHoldingLedger({
+    required String assetType,
+    required String market,
+    required String stockCode,
+  }) async {
+    final db = await database;
+    return db.delete(
+      'holding_ledgers',
       where: 'asset_type = ? AND market = ? AND stock_code = ?',
       whereArgs: [assetType, market, stockCode],
     );

@@ -715,9 +715,16 @@ class _HoldingCard extends ConsumerWidget {
           ...position.batches.map(
             (b) => _BatchRow(
               batch: b,
-              isLastBatch: position.batches.length == 1,
             ),
           ),
+          if (position.batches.isEmpty)
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: Text(
+                '暂无播种记录',
+                style: TextStyle(color: AppTheme.textMuted, fontSize: 12),
+              ),
+            ),
           const SizedBox(height: 8),
         ],
       ),
@@ -799,61 +806,19 @@ class _FlowActionRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ctx = _buildContext();
-    final canHarvest =
-        position.totalRemaining > 0 && position.effectiveRemainingCost > 0;
-    final harvestDisabledReason = position.totalRemaining <= 0
-        ? '已无剩余${position.quantityUnit}数，不能再计算卖出收割；如本金未回满，请记录现金派发或修正回收记录。'
-        : '本金已回收完成，无需再计算收割。';
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-      child: Row(
-        children: [
-          Expanded(
-            child: _FlowButton(
-              icon: Icons.auto_graph_outlined,
-              label: '计算收割',
-              color: AppTheme.accentGold,
-              enabled: canHarvest,
-              disabledReason: canHarvest ? null : harvestDisabledReason,
-              onTap: () => Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => HarvestCalculatorScreen(stockContext: ctx),
-                ),
-              ),
-            ),
+      child: _FlowButton(
+        icon: Icons.health_and_safety_outlined,
+        label: '重新排雷',
+        color: AppTheme.accent,
+        enabled: true,
+        onTap: () => Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => SeedScreeningScreen(stockContext: ctx),
           ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: _FlowButton(
-              icon: Icons.grass_outlined,
-              label: '继续播种',
-              color: AppTheme.primaryGreen,
-              enabled: true,
-              onTap: () => Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => SeedPlanScreen(stockContext: ctx),
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: _FlowButton(
-              icon: Icons.health_and_safety_outlined,
-              label: '重新排雷',
-              color: AppTheme.accent,
-              enabled: true,
-              onTap: () => Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => SeedScreeningScreen(stockContext: ctx),
-                ),
-              ),
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -864,7 +829,6 @@ class _FlowButton extends StatefulWidget {
   final String label;
   final Color color;
   final bool enabled;
-  final String? disabledReason;
   final FutureOr<void> Function() onTap;
 
   const _FlowButton({
@@ -872,7 +836,6 @@ class _FlowButton extends StatefulWidget {
     required this.label,
     required this.color,
     required this.enabled,
-    this.disabledReason,
     required this.onTap,
   });
 
@@ -886,11 +849,6 @@ class _FlowButtonState extends State<_FlowButton> {
   Future<void> _handleTap() async {
     if (_busy) return;
     if (!widget.enabled) {
-      final message = widget.disabledReason;
-      if (message == null || message.isEmpty) return;
-      final messenger = ScaffoldMessenger.of(context);
-      messenger.clearSnackBars();
-      messenger.showSnackBar(SnackBar(content: Text(message)));
       return;
     }
 
@@ -988,11 +946,9 @@ class _IdempotentIconButtonState extends State<_IdempotentIconButton> {
 
 class _BatchRow extends ConsumerWidget {
   final HoldingBatch batch;
-  final bool isLastBatch;
 
   const _BatchRow({
     required this.batch,
-    required this.isLastBatch,
   });
 
   @override
@@ -1010,84 +966,141 @@ class _BatchRow extends ConsumerWidget {
             ? AppTheme.textMuted
             : AppTheme.accent;
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-      child: Row(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            width: 6,
-            height: 6,
-            decoration: BoxDecoration(shape: BoxShape.circle, color: dotColor),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.only(top: 7),
+                child: Container(
+                  width: 7,
+                  height: 7,
+                  decoration:
+                      BoxDecoration(shape: BoxShape.circle, color: dotColor),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '${Formatters.dateTimeFull(batch.buyDate)} 播种 ${Formatters.quantity(batch.quantity)}${batch.quantityUnit}',
+                      style: const TextStyle(
+                        color: AppTheme.textPrimary,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        height: 1.35,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '价格 ¥${Formatters.price(batch.buyPrice)} · 剩余 ${Formatters.quantity(batch.remainingQuantity)}${batch.quantityUnit} · 剩余成本 ¥${Formatters.money(batch.effectiveRemainingCost)}',
+                      style: const TextStyle(
+                        color: AppTheme.textSecondary,
+                        fontSize: 12,
+                        height: 1.35,
+                      ),
+                    ),
+                    if (batch.sellPrice != null) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        '${batch.sellDate != null ? '${Formatters.dateTimeFull(batch.sellDate!)} ' : ''}已回收 ${Formatters.quantity(batch.sellQuantity ?? 0)}${batch.quantityUnit}，价格 ¥${Formatters.price(batch.sellPrice!)}，现金 ¥${Formatters.money(batch.recoveredAmount)}',
+                        style: const TextStyle(
+                          color: AppTheme.primaryGreen,
+                          fontSize: 12,
+                          height: 1.35,
+                        ),
+                      ),
+                    ],
+                    if (batch.cashIncome > 0) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        '现金分红/派发 ¥${Formatters.money(batch.cashIncome)}',
+                        style: const TextStyle(
+                          color: AppTheme.accentGold,
+                          fontSize: 12,
+                          height: 1.35,
+                        ),
+                      ),
+                    ],
+                    if (batch.planBatchIndex != null) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        '来自播种计划第 ${batch.planBatchIndex} 批',
+                        style: const TextStyle(
+                          color: AppTheme.accent,
+                          fontSize: 12,
+                          height: 1.35,
+                        ),
+                      ),
+                    ],
+                    if (batch.remainingQuantity <= 0 && !batch.isZeroCost) ...[
+                      const SizedBox(height: 2),
+                      const Text(
+                        '已无剩余数量但本金未回满，可点修正回收或记录现金派发。',
+                        style: TextStyle(
+                          color: AppTheme.accentGold,
+                          fontSize: 12,
+                          height: 1.35,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              _BatchProgressBadge(progress: batch.zeroCostProgress),
+            ],
           ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+          const SizedBox(height: 8),
+          Padding(
+            padding: const EdgeInsets.only(left: 17),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.end,
               children: [
-                Text(
-                  '${Formatters.dateTimeFull(batch.buyDate)} 播种 ${Formatters.quantity(batch.quantity)}${batch.quantityUnit}，价格 ¥${Formatters.price(batch.buyPrice)}',
-                  style: const TextStyle(
-                      color: AppTheme.textSecondary, fontSize: 12),
+                _IdempotentIconButton(
+                  tooltip: '查看计划批次',
+                  enabled: batch.hasPlanSnapshot,
+                  onPressed: () => _openPlanBatch(context, batch),
+                  icon: Icons.grass_outlined,
+                  color: AppTheme.accent,
                 ),
-                if (batch.sellPrice != null)
-                  Text(
-                    '${batch.sellDate != null ? '${Formatters.dateTimeFull(batch.sellDate!)} ' : ''}已回收 ${Formatters.quantity(batch.sellQuantity ?? 0)}${batch.quantityUnit}，价格 ¥${Formatters.price(batch.sellPrice!)}，现金 ¥${Formatters.money(batch.recoveredAmount)}',
-                    style: const TextStyle(
-                        color: AppTheme.primaryGreen, fontSize: 11),
-                  ),
-                if (batch.cashIncome > 0)
-                  Text(
-                    '现金分红/派发 ¥${Formatters.money(batch.cashIncome)}',
-                    style: const TextStyle(
-                        color: AppTheme.accentGold, fontSize: 11),
-                  ),
-                Text(
-                  '剩余 ${Formatters.quantity(batch.remainingQuantity)}${batch.quantityUnit}，剩余成本 ¥${Formatters.money(batch.effectiveRemainingCost)}',
-                  style:
-                      const TextStyle(color: AppTheme.textMuted, fontSize: 11),
+                _IdempotentIconButton(
+                  tooltip: '计算收割',
+                  enabled: batch.id != null &&
+                      batch.remainingQuantity > 0 &&
+                      batch.effectiveRemainingCost > 0,
+                  onPressed: () => _openBatchHarvest(context, batch),
+                  icon: Icons.auto_graph_outlined,
+                  color: AppTheme.accentGold,
                 ),
-                if (batch.planBatchIndex != null)
-                  Text(
-                    '来自播种计划第 ${batch.planBatchIndex} 批',
-                    style:
-                        const TextStyle(color: AppTheme.accent, fontSize: 11),
-                  ),
-                if (batch.remainingQuantity <= 0 && !batch.isZeroCost)
-                  const Text(
-                    '已无剩余数量但本金未回满，可点修正回收或记录现金派发。',
-                    style: TextStyle(color: AppTheme.accentGold, fontSize: 11),
-                  ),
+                _IdempotentIconButton(
+                  tooltip: recoverTooltip,
+                  enabled: canRecordRecover,
+                  onPressed: () => _showRecoverDialog(context, ref, batch),
+                  icon: Icons.receipt_long_outlined,
+                  color: AppTheme.accentGold,
+                ),
+                _IdempotentIconButton(
+                  tooltip: '记录现金派发',
+                  enabled: batch.id != null,
+                  onPressed: () => _showCashIncomeDialog(context, ref, batch),
+                  icon: Icons.water_drop_outlined,
+                  color: AppTheme.primaryGreen,
+                ),
+                _IdempotentIconButton(
+                  tooltip: '删除记录',
+                  enabled: batch.id != null,
+                  onPressed: () => _confirmDeleteBatch(context, ref, batch),
+                  icon: Icons.delete_outline,
+                  color: AppTheme.riskRed,
+                ),
               ],
             ),
-          ),
-          _BatchProgressBadge(progress: batch.zeroCostProgress),
-          const SizedBox(width: 4),
-          _IdempotentIconButton(
-            tooltip: '查看计划批次',
-            enabled: batch.hasPlanSnapshot,
-            onPressed: () => _openPlanBatch(context, batch),
-            icon: Icons.grass_outlined,
-            color: AppTheme.accent,
-          ),
-          _IdempotentIconButton(
-            tooltip: recoverTooltip,
-            enabled: canRecordRecover,
-            onPressed: () => _showRecoverDialog(context, ref, batch),
-            icon: Icons.receipt_long_outlined,
-            color: AppTheme.accentGold,
-          ),
-          _IdempotentIconButton(
-            tooltip: '记录现金派发',
-            enabled: batch.id != null,
-            onPressed: () => _showCashIncomeDialog(context, ref, batch),
-            icon: Icons.water_drop_outlined,
-            color: AppTheme.primaryGreen,
-          ),
-          _IdempotentIconButton(
-            tooltip: '删除记录',
-            enabled: batch.id != null,
-            onPressed: () => _confirmDeleteBatch(context, ref, batch),
-            icon: Icons.delete_outline,
-            color: AppTheme.riskRed,
           ),
         ],
       ),
@@ -1123,20 +1136,53 @@ class _BatchRow extends ConsumerWidget {
     );
   }
 
+  void _openBatchHarvest(BuildContext context, HoldingBatch batch) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => HarvestCalculatorScreen(
+          targetBatchId: batch.id,
+          stockContext: StockContext(
+            code: batch.stockCode,
+            name: batch.stockName,
+            market: batch.market,
+            assetType: batch.assetType,
+            currentPrice: batch.planStartPrice ??
+                (batch.effectiveCostPrice > 0
+                    ? batch.effectiveCostPrice
+                    : batch.buyPrice),
+            remainingCost: batch.effectiveRemainingCost,
+            remainingQty: batch.remainingQuantity,
+            avgCostPrice: batch.effectiveCostPrice,
+            planRecoverPrice: batch.planRecoverPrice,
+            planRecoverQuantity: batch.planRecoverQuantity,
+            planCapital: batch.planCapital,
+            planStartPrice: batch.planStartPrice,
+            planSeedCount: batch.planSeedCount,
+            planDropStep: batch.planDropStep,
+            planRebound: batch.planRebound,
+            planCommission: batch.planCommission,
+            planWeightModeKey: batch.planWeightModeKey,
+            planBatchIndex: batch.planBatchIndex,
+          ),
+        ),
+      ),
+    );
+  }
+
   Future<void> _confirmDeleteBatch(
     BuildContext context,
     WidgetRef ref,
     HoldingBatch batch,
   ) async {
+    if (batch.id == null) return;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: AppTheme.bgCard,
-        title: Text(isLastBatch ? '删除最后一条记录' : '删除播种记录'),
+        title: const Text('删除播种记录'),
         content: Text(
-          isLastBatch
-              ? '这是 ${batch.stockName} 的最后一条播种记录。删除后，该标的的整个播种账本也会消失，并从持仓列表中移除。此操作无法恢复。'
-              : '将删除 ${batch.stockName} ${Formatters.date(batch.buyDate)} 的这条记录，并重新计算本金收回进度。此操作无法恢复。',
+          '将删除 ${batch.stockName} ${Formatters.date(batch.buyDate)} 的这条记录，并重新计算本金收回进度。此操作无法恢复。',
           style: const TextStyle(color: AppTheme.textSecondary, height: 1.4),
         ),
         actions: [
@@ -1147,12 +1193,17 @@ class _BatchRow extends ConsumerWidget {
           ElevatedButton(
             onPressed: () => Navigator.pop(ctx, true),
             style: ElevatedButton.styleFrom(backgroundColor: AppTheme.riskRed),
-            child: Text(isLastBatch ? '确认删除账本' : '确认删除'),
+            child: const Text('确认删除'),
           ),
         ],
       ),
     );
-    if (confirmed != true || batch.id == null || !context.mounted) return;
+    if (confirmed != true || !context.mounted) return;
+    await _deleteBatch(ref, batch);
+  }
+
+  Future<void> _deleteBatch(WidgetRef ref, HoldingBatch batch) async {
+    if (batch.id == null) return;
     await ref.read(holdingPositionsProvider.notifier).deleteBatch(batch.id!);
   }
 

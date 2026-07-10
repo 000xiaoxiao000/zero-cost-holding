@@ -205,6 +205,44 @@ class HoldingBatch {
 }
 
 /// 持仓汇总 - 对某只股票或基金所有批次的聚合视图
+class HoldingLedger {
+  final String assetType;
+  final String market;
+  final String stockCode;
+  final String stockName;
+  final DateTime createdAt;
+
+  HoldingLedger({
+    this.assetType = 'stock',
+    this.market = 'SH',
+    required this.stockCode,
+    required this.stockName,
+    required this.createdAt,
+  });
+
+  String get key => '$assetType:$market:$stockCode';
+
+  Map<String, dynamic> toMap() {
+    return {
+      'asset_type': assetType,
+      'market': market,
+      'stock_code': stockCode,
+      'stock_name': stockName,
+      'created_at': createdAt.toIso8601String(),
+    };
+  }
+
+  factory HoldingLedger.fromMap(Map<String, dynamic> map) {
+    return HoldingLedger(
+      assetType: map['asset_type'] ?? 'stock',
+      market: map['market'] ?? 'SH',
+      stockCode: map['stock_code'] ?? '',
+      stockName: map['stock_name'] ?? '',
+      createdAt: DateTime.tryParse(map['created_at'] ?? '') ?? DateTime.now(),
+    );
+  }
+}
+
 class HoldingPosition {
   final String assetType;
   final String market;
@@ -267,5 +305,5 @@ class HoldingPosition {
     return (totalRecovered / totalInvested).clamp(0.0, 1.0);
   }
 
-  bool get isZeroCost => totalRecovered >= totalInvested;
+  bool get isZeroCost => totalInvested > 0 && totalRecovered >= totalInvested;
 }

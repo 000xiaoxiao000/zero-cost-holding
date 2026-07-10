@@ -7,14 +7,31 @@ class HoldingPositionsNotifier
   HoldingPositionsNotifier() : super({});
 
   final _db = DatabaseHelper();
+  Map<String, HoldingLedger> _ledgers = {};
 
   Future<void> load() async {
     final result = <String, List<HoldingBatch>>{};
+    final ledgers = <String, HoldingLedger>{};
+    final ledgerRows = await _db.getHoldingLedgers();
+    for (final ledger in ledgerRows.map(HoldingLedger.fromMap)) {
+      ledgers[ledger.key] = ledger;
+    }
     final rows = await _db.getHoldingBatches();
     for (final batch in rows.map(HoldingBatch.fromMap)) {
       final key = '${batch.assetType}:${batch.market}:${batch.stockCode}';
+      ledgers.putIfAbsent(
+        key,
+        () => HoldingLedger(
+          assetType: batch.assetType,
+          market: batch.market,
+          stockCode: batch.stockCode,
+          stockName: batch.stockName,
+          createdAt: batch.buyDate,
+        ),
+      );
       result.putIfAbsent(key, () => []).add(batch);
     }
+    _ledgers = ledgers;
     state = result;
   }
 
@@ -77,18 +94,27 @@ class HoldingPositionsNotifier
       market: market,
       stockCode: stockCode,
     );
+    await _db.deleteHoldingLedger(
+      assetType: assetType,
+      market: market,
+      stockCode: stockCode,
+    );
     await load();
   }
 
   List<HoldingPosition> get holdings {
-    return state.entries.map((entry) {
-      final batches = entry.value;
-      final name = batches.isNotEmpty ? batches.first.stockName : entry.key;
+    final keys = <String>{..._ledgers.keys, ...state.keys};
+    return keys.map((key) {
+      final batches = state[key] ?? const <HoldingBatch>[];
+      final ledger = _ledgers[key];
+      final name = batches.isNotEmpty
+          ? batches.first.stockName
+          : ledger?.stockName ?? key;
       final first = batches.isNotEmpty ? batches.first : null;
       return HoldingPosition(
-        assetType: first?.assetType ?? 'stock',
-        market: first?.market ?? 'SH',
-        stockCode: first?.stockCode ?? entry.key,
+        assetType: first?.assetType ?? ledger?.assetType ?? 'stock',
+        market: first?.market ?? ledger?.market ?? 'SH',
+        stockCode: first?.stockCode ?? ledger?.stockCode ?? key,
         stockName: name,
         batches: batches,
       );

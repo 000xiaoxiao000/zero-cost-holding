@@ -4,16 +4,23 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../models/holding_batch.dart';
 import '../models/stock_context.dart';
 import '../navigation/app_navigation.dart';
+import '../providers/holding_providers.dart';
 import '../providers/stock_providers.dart';
 import '../theme/app_theme.dart';
 import '../utils/formatters.dart';
 
 class HarvestCalculatorScreen extends ConsumerStatefulWidget {
   final StockContext? stockContext;
+  final int? targetBatchId;
 
-  const HarvestCalculatorScreen({super.key, this.stockContext});
+  const HarvestCalculatorScreen({
+    super.key,
+    this.stockContext,
+    this.targetBatchId,
+  });
 
   @override
   ConsumerState<HarvestCalculatorScreen> createState() =>
@@ -120,6 +127,163 @@ class _HarvestCalculatorScreenState
   double get _recentHigh => double.tryParse(_recentHighController.text) ?? 0;
 
   String get _unit => _isFund ? '份' : '股';
+
+  HoldingPosition? _contextPosition() {
+    final ctx = widget.stockContext;
+    if (ctx?.code == null) return null;
+    final key =
+        '${ctx!.assetType ?? _assetType}:${ctx.market ?? 'SH'}:${ctx.code}';
+    final batches = ref.read(holdingPositionsProvider)[key];
+    if (batches == null || batches.isEmpty) return null;
+    return HoldingPosition(
+      assetType: ctx.assetType ?? _assetType,
+      market: ctx.market ?? 'SH',
+      stockCode: ctx.code!,
+      stockName: ctx.name ?? batches.first.stockName,
+      batches: batches,
+    );
+  }
+
+  Future<void> _recordHarvestPlan(_HarvestPlan plan) async {
+    final position = _contextPosition();
+    if (position == null || plan.zeroCostSellQty <= 0 || plan.upperPrice <= 0) {
+      _showSnack('没有可入账的持仓批次');
+      return;
+    }
+
+    final actions = _buildSellActions(position, plan.zeroCostSellQty);
+    if (actions.isEmpty) {
+      _showSnack('没有剩余${position.quantityUnit}数可记录回收');
+      return;
+    }
+    final actionQuantity =
+        actions.fold(0.0, (sum, action) => sum + action.quantity);
+    final remainingAfterAction = widget.targetBatchId == null
+        ? position.totalRemaining - actionQuantity
+        : actions.first.batch.remainingQuantity - actionQuantity;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => _ExecutionConfirmDialog(
+        title: widget.targetBatchId == null ? '确认记录回收' : '确认记录当前批次回收',
+        icon: Icons.receipt_long_outlined,
+        iconColor: AppTheme.accentGold,
+        summary:
+            '${position.stockName} ${position.stockCode}\n卖出 ${Formatters.quantity(actionQuantity)}${position.quantityUnit} · 价格 ¥${Formatters.price(plan.upperPrice)}',
+        metrics: [
+          _ConfirmMetric(
+              '预计回收现金', Formatters.money(actionQuantity * plan.upperPrice)),
+          _ConfirmMetric('执行后保留',
+              '${Formatters.quantity(remainingAfterAction)}${position.quantityUnit}'),
+          _ConfirmMetric(widget.targetBatchId == null ? '影响批次' : '入账批次',
+              widget.targetBatchId == null ? '${actions.length} 批' : '当前播种记录'),
+        ],
+        warning: actions.length > 1 ? '本次数量会自动分摊到多个仍有剩余数量的批次。' : null,
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    final notifier = ref.read(holdingPositionsProvider.notifier);
+    final sellDate = DateTime.now();
+    for (final action in actions) {
+      await notifier.recordSell(
+        action.batch.id!,
+        plan.upperPrice,
+        action.quantity,
+        sellDate: sellDate,
+      );
+    }
+    if (!mounted) return;
+    _showSnack('回收已入账，零成本进度已更新');
+    AppNavigation.goHomeTab(context, HomeTab.holding);
+  }
+
+  List<_SellAction> _buildSellActions(
+      HoldingPosition position, double targetQty) {
+    final targetBatchId = widget.targetBatchId;
+    if (targetBatchId != null) {
+      for (final batch in position.batches) {
+        if (batch.id != targetBatchId) continue;
+        if (batch.remainingQuantity <= 0) return [];
+        return [
+          _SellAction(batch, math.min(targetQty, batch.remainingQuantity)),
+        ];
+      }
+      return [];
+    }
+
+    var remaining = math.min(targetQty, position.totalRemaining);
+    final batches = [...position.batches]..sort((a, b) {
+        final aPlan = a.hasPlanSnapshot ? 0 : 1;
+        final bPlan = b.hasPlanSnapshot ? 0 : 1;
+        if (aPlan != bPlan) return aPlan.compareTo(bPlan);
+        return a.buyDate.compareTo(b.buyDate);
+      });
+
+    final actions = <_SellAction>[];
+    for (final batch in batches) {
+      if (remaining <= 0) break;
+      if (batch.id == null || batch.remainingQuantity <= 0) continue;
+      final qty = math.min(remaining, batch.remainingQuantity);
+      if (qty <= 0) continue;
+      actions.add(_SellAction(batch, qty));
+      remaining -= qty;
+    }
+    return actions;
+  }
+
+  Future<void> _recordIrrigationPlan(_HarvestPlan plan) async {
+    final ctx = widget.stockContext;
+    if (ctx?.code == null ||
+        ctx?.name == null ||
+        plan.suggestedBuyQty <= 0 ||
+        plan.lowerPrice <= 0) {
+      _showSnack('没有可入账的低吸方案');
+      return;
+    }
+    final assetType = ctx!.assetType ?? _assetType;
+    final market = ctx.market ?? 'SH';
+    final code = ctx.code!;
+    final name = ctx.name!;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => _ExecutionConfirmDialog(
+        title: '确认记录低吸',
+        icon: Icons.grass_outlined,
+        iconColor: AppTheme.primaryGreen,
+        summary:
+            '$name $code\n买入 ${Formatters.quantity(plan.suggestedBuyQty)}$_unit · 价格 ¥${Formatters.price(plan.lowerPrice)}',
+        metrics: [
+          _ConfirmMetric('预计占用现金', Formatters.money(plan.suggestedBuyCash)),
+          _ConfirmMetric('记录类型', '新增播种批次'),
+          _ConfirmMetric('记录时间', Formatters.dateTimeFull(DateTime.now())),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    final batch = HoldingBatch(
+      assetType: assetType,
+      market: market,
+      stockCode: code,
+      stockName: name,
+      buyPrice: plan.lowerPrice,
+      quantity: plan.suggestedBuyQty,
+      buyDate: DateTime.now(),
+      note: '来自收割计算：灌溉低吸',
+    );
+    await ref.read(holdingPositionsProvider.notifier).addBatch(batch);
+    if (!mounted) return;
+    _showSnack('低吸已作为新播种批次入账');
+    AppNavigation.goHomeTab(context, HomeTab.holding);
+  }
+
+  void _showSnack(String message) {
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.clearSnackBars();
+    messenger.showSnackBar(SnackBar(content: Text(message)));
+  }
 
   @override
   void dispose() {
@@ -235,9 +399,16 @@ class _HarvestCalculatorScreenState
             plan: plan,
             unit: _unit,
             stockName: widget.stockContext?.name,
+            canRecord: widget.stockContext?.code != null,
+            onRecord: () => _recordHarvestPlan(plan),
           ),
           const SizedBox(height: 12),
-          _IrrigationCard(plan: plan, unit: _unit),
+          _IrrigationCard(
+            plan: plan,
+            unit: _unit,
+            canRecord: widget.stockContext?.code != null,
+            onRecord: () => _recordIrrigationPlan(plan),
+          ),
           const SizedBox(height: 12),
           const _DisciplineCard(),
         ],
@@ -616,10 +787,14 @@ class _ZeroCostActionCard extends StatelessWidget {
   final _HarvestPlan plan;
   final String unit;
   final String? stockName;
+  final bool canRecord;
+  final VoidCallback onRecord;
 
   const _ZeroCostActionCard({
     required this.plan,
     required this.unit,
+    required this.canRecord,
+    required this.onRecord,
     this.stockName,
   });
 
@@ -714,6 +889,25 @@ class _ZeroCostActionCard extends StatelessWidget {
                 : Formatters.money(plan.gapAfterSell),
             color: canZero ? AppTheme.accentGold : AppTheme.riskRed,
           ),
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            height: 44,
+            child: ElevatedButton.icon(
+              onPressed: canRecord && hasData ? onRecord : null,
+              icon: const Icon(Icons.receipt_long_outlined, size: 18),
+              label: const Text('记录本次回收'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppTheme.accentGold,
+                foregroundColor: AppTheme.bgDark,
+                disabledBackgroundColor: AppTheme.bgCardLight,
+                disabledForegroundColor: AppTheme.textMuted,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -723,11 +917,19 @@ class _ZeroCostActionCard extends StatelessWidget {
 class _IrrigationCard extends StatelessWidget {
   final _HarvestPlan plan;
   final String unit;
+  final bool canRecord;
+  final VoidCallback onRecord;
 
-  const _IrrigationCard({required this.plan, required this.unit});
+  const _IrrigationCard({
+    required this.plan,
+    required this.unit,
+    required this.canRecord,
+    required this.onRecord,
+  });
 
   @override
   Widget build(BuildContext context) {
+    final hasData = plan.suggestedBuyQty > 0;
     return _InfoCard(
       title: '灌溉低吸提示',
       children: [
@@ -745,6 +947,25 @@ class _IrrigationCard extends StatelessWidget {
           label: '预计占用现金',
           value: Formatters.money(plan.suggestedBuyCash),
           color: AppTheme.textPrimary,
+        ),
+        const SizedBox(height: 12),
+        SizedBox(
+          width: double.infinity,
+          height: 44,
+          child: ElevatedButton.icon(
+            onPressed: canRecord && hasData ? onRecord : null,
+            icon: const Icon(Icons.grass_outlined, size: 18),
+            label: const Text('记录本次低吸'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppTheme.primaryGreen,
+              foregroundColor: Colors.white,
+              disabledBackgroundColor: AppTheme.bgCardLight,
+              disabledForegroundColor: AppTheme.textMuted,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+          ),
         ),
       ],
     );
@@ -1033,6 +1254,127 @@ class _NumberField extends StatelessWidget {
       ],
     );
   }
+}
+
+class _ExecutionConfirmDialog extends StatelessWidget {
+  final String title;
+  final IconData icon;
+  final Color iconColor;
+  final String summary;
+  final List<_ConfirmMetric> metrics;
+  final String? warning;
+
+  const _ExecutionConfirmDialog({
+    required this.title,
+    required this.icon,
+    required this.iconColor,
+    required this.summary,
+    required this.metrics,
+    this.warning,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: AppTheme.bgCard,
+      title: Row(
+        children: [
+          Icon(icon, color: iconColor, size: 20),
+          const SizedBox(width: 8),
+          Text(title),
+        ],
+      ),
+      content: SizedBox(
+        width: 360,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: AppTheme.bgCardLight,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: AppTheme.borderColor, width: 0.5),
+              ),
+              child: Text(
+                summary,
+                style: const TextStyle(
+                  color: AppTheme.textPrimary,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  height: 1.45,
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            ...metrics.map(
+              (metric) => Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        metric.label,
+                        style: const TextStyle(
+                          color: AppTheme.textSecondary,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ),
+                    Text(
+                      metric.value,
+                      style: const TextStyle(
+                        color: AppTheme.textPrimary,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            if (warning != null) ...[
+              const SizedBox(height: 4),
+              Text(
+                warning!,
+                style: const TextStyle(
+                  color: AppTheme.accentGold,
+                  fontSize: 12,
+                  height: 1.35,
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context, false),
+          child: const Text('取消'),
+        ),
+        ElevatedButton(
+          onPressed: () => Navigator.pop(context, true),
+          child: const Text('确认入账'),
+        ),
+      ],
+    );
+  }
+}
+
+class _ConfirmMetric {
+  final String label;
+  final String value;
+
+  const _ConfirmMetric(this.label, this.value);
+}
+
+class _SellAction {
+  final HoldingBatch batch;
+  final double quantity;
+
+  const _SellAction(this.batch, this.quantity);
 }
 
 class _HarvestPlan {
