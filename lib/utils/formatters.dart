@@ -4,6 +4,7 @@ class Formatters {
   static final _price = NumberFormat('#,##0.000', 'zh_CN');
   static final _pctSimple = NumberFormat('#,##0.00', 'zh_CN');
   static final _large = NumberFormat('#,##0.00', 'zh_CN');
+  static final _money3 = NumberFormat('#,##0.000', 'zh_CN');
   static final _date = DateFormat('yyyy-MM-dd');
   static final _dateShort = DateFormat('MM/dd');
   static final _dateTime = DateFormat('MM-dd HH:mm');
@@ -11,6 +12,7 @@ class Formatters {
 
   static String price(double v) => _price.format(v);
   static String money(double v) => _large.format(v);
+  static String money3(double v) => _money3.format(v);
 
   static String quantity(double v) {
     if (v == v.roundToDouble()) {

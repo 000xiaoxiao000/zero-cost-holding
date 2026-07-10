@@ -102,6 +102,7 @@ class _SeedPlanScreenState extends State<SeedPlanScreen>
   late final TextEditingController _seedCountController;
   late final TextEditingController _dropStepController;
   final _reboundController = TextEditingController(text: '30');
+  final _commissionRateController = TextEditingController(text: '0');
   final _commissionController = TextEditingController(text: '5');
   late String _assetType;
   late WeightMode _weightMode;
@@ -167,6 +168,7 @@ class _SeedPlanScreenState extends State<SeedPlanScreen>
     _seedCountController.dispose();
     _dropStepController.dispose();
     _reboundController.dispose();
+    _commissionRateController.dispose();
     _commissionController.dispose();
     _dcaAmountController.dispose();
     _dcaSessionsController.dispose();
@@ -194,7 +196,31 @@ class _SeedPlanScreenState extends State<SeedPlanScreen>
     return math.max(0.0, value);
   }
 
-  double get _commission => double.tryParse(_commissionController.text) ?? 0;
+  double get _commissionRateWan =>
+      math.max(0.0, double.tryParse(_commissionRateController.text) ?? 0);
+
+  double get _minimumCommission =>
+      math.max(0.0, double.tryParse(_commissionController.text) ?? 0);
+
+  double _commissionForAmount(double amount) {
+    if (amount <= 0) return 0.0;
+    return math.max(amount * _commissionRateWan / 10000, _minimumCommission);
+  }
+
+  double _costForQuantity(double quantity, double price) {
+    final amount = quantity * price;
+    return amount + _commissionForAmount(amount);
+  }
+
+  double _quantityForCapital(double capital, double price) {
+    if (capital <= 0 || price <= 0) return 0.0;
+    var quantity = (capital / price / 100).floor() * 100;
+    while (quantity > 0 &&
+        _costForQuantity(quantity.toDouble(), price) > capital) {
+      quantity -= 100;
+    }
+    return quantity.toDouble();
+  }
 
   /// 正金字塔权重：第 i 批（0-indexed）权重 = i+1；归一化后返回每批资金
   List<double> _trancheWeights() {
@@ -225,7 +251,7 @@ class _SeedPlanScreenState extends State<SeedPlanScreen>
   double? _minimumCostWithFreeSeed(double buyPrice, double targetPrice) {
     if (buyPrice <= 0 || targetPrice <= buyPrice) return null;
     for (var quantity = 100.0; quantity <= 1000000; quantity += 100) {
-      final cost = quantity * buyPrice + _commission;
+      final cost = _costForQuantity(quantity, buyPrice);
       final recoverQuantity = _recoverQuantity(
         quantity: quantity,
         cost: cost,
@@ -269,10 +295,10 @@ class _SeedPlanScreenState extends State<SeedPlanScreen>
           ? spec.minimumCost! +
               (_capital - minimumTotal) * weights[i] / weightTotal
           : weightedCapital;
-      final quantity =
-          (((trancheCapital - _commission) / spec.buyPrice / 100).floor() * 100)
-              .toDouble();
-      final cost = quantity * spec.buyPrice + _commission;
+      final quantity = _quantityForCapital(trancheCapital, spec.buyPrice);
+      final amount = quantity * spec.buyPrice;
+      final commission = _commissionForAmount(amount);
+      final cost = amount + commission;
       final recoverQuantity = _recoverQuantity(
         quantity: quantity,
         cost: cost,
@@ -282,6 +308,7 @@ class _SeedPlanScreenState extends State<SeedPlanScreen>
         index: i + 1,
         buyPrice: spec.buyPrice,
         quantity: quantity,
+        commission: commission,
         cost: cost,
         targetPrice: spec.targetPrice,
         recoverQuantity: recoverQuantity,
@@ -355,6 +382,7 @@ class _SeedPlanScreenState extends State<SeedPlanScreen>
             seedCountController: _seedCountController,
             dropStepController: _dropStepController,
             reboundController: _reboundController,
+            commissionRateController: _commissionRateController,
             commissionController: _commissionController,
             assetType: _assetType,
             weightMode: _weightMode,
@@ -422,6 +450,7 @@ class _SeedPlanTab extends StatelessWidget {
   final TextEditingController seedCountController;
   final TextEditingController dropStepController;
   final TextEditingController reboundController;
+  final TextEditingController commissionRateController;
   final TextEditingController commissionController;
   final String assetType;
   final WeightMode weightMode;
@@ -439,6 +468,7 @@ class _SeedPlanTab extends StatelessWidget {
     required this.seedCountController,
     required this.dropStepController,
     required this.reboundController,
+    required this.commissionRateController,
     required this.commissionController,
     required this.assetType,
     required this.weightMode,
@@ -461,7 +491,7 @@ class _SeedPlanTab extends StatelessWidget {
           seedCount: int.tryParse(seedCountController.text) ?? plan.length,
           dropStepPct: double.tryParse(dropStepController.text) ?? 0,
           reboundPct: double.tryParse(reboundController.text) ?? 0,
-          commission: double.tryParse(commissionController.text) ?? 0,
+          commission: slice.commission,
           weightMode: weightMode,
         );
 
@@ -488,6 +518,7 @@ class _SeedPlanTab extends StatelessWidget {
           seedCountController: seedCountController,
           dropStepController: dropStepController,
           reboundController: reboundController,
+          commissionRateController: commissionRateController,
           commissionController: commissionController,
           assetType: assetType,
           weightMode: weightMode,
@@ -782,6 +813,7 @@ class _PlannerForm extends StatelessWidget {
   final TextEditingController seedCountController;
   final TextEditingController dropStepController;
   final TextEditingController reboundController;
+  final TextEditingController commissionRateController;
   final TextEditingController commissionController;
   final String assetType;
   final WeightMode weightMode;
@@ -795,6 +827,7 @@ class _PlannerForm extends StatelessWidget {
     required this.seedCountController,
     required this.dropStepController,
     required this.reboundController,
+    required this.commissionRateController,
     required this.commissionController,
     required this.assetType,
     required this.weightMode,
@@ -892,12 +925,26 @@ class _PlannerForm extends StatelessWidget {
               const SizedBox(width: 12),
               Expanded(
                 child: _NumberField(
-                  label: '单笔费用',
+                  label: '佣金费率',
+                  suffix: '万分',
+                  controller: commissionRateController,
+                  onChanged: onChanged,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: _NumberField(
+                  label: '最低收费',
                   suffix: '元',
                   controller: commissionController,
                   onChanged: onChanged,
                 ),
               ),
+              const Spacer(),
             ],
           ),
         ],
@@ -1129,7 +1176,7 @@ class _PlanSummary extends StatelessWidget {
           Expanded(
             child: _Metric(
               label: '预计投入',
-              value: Formatters.money(totalCost),
+              value: Formatters.money3(totalCost),
             ),
           ),
           Expanded(
@@ -1147,7 +1194,7 @@ class _PlanSummary extends StatelessWidget {
           Expanded(
             child: _Metric(
               label: '余留现金',
-              value: Formatters.money(idleCash),
+              value: Formatters.money3(idleCash),
             ),
           ),
         ],
@@ -1208,12 +1255,33 @@ class _SeedSliceCard extends StatelessWidget {
                   ),
                 ),
               ),
-              Text(
-                Formatters.money(slice.cost),
-                style: const TextStyle(
-                  color: AppTheme.accentGold,
-                  fontWeight: FontWeight.w700,
-                ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  const Text(
+                    '投入成本',
+                    style: TextStyle(
+                      color: AppTheme.textMuted,
+                      fontSize: 10,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    Formatters.money3(slice.cost),
+                    style: const TextStyle(
+                      color: AppTheme.accentGold,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    '含费用 ${Formatters.money3(slice.commission)}',
+                    style: const TextStyle(
+                      color: AppTheme.textMuted,
+                      fontSize: 10,
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
@@ -1504,6 +1572,7 @@ class _SeedSlice {
   final int index;
   final double buyPrice;
   final double quantity;
+  final double commission;
   final double cost;
   final double targetPrice;
   final double recoverQuantity;
@@ -1513,6 +1582,7 @@ class _SeedSlice {
     required this.index,
     required this.buyPrice,
     required this.quantity,
+    required this.commission,
     required this.cost,
     required this.targetPrice,
     required this.recoverQuantity,

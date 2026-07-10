@@ -60,6 +60,9 @@ class _AddHoldingBatchScreenState extends ConsumerState<AddHoldingBatchScreen> {
           : '',
     );
     _amountController = TextEditingController();
+    if (ctx?.planCommission != null) {
+      _commissionController.text = ctx!.planCommission!.toStringAsFixed(2);
+    }
     _syncAmountFromPriceQty();
   }
 
