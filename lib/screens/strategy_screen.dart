@@ -1,9 +1,44 @@
 import 'package:flutter/material.dart';
 
+import '../services/alert_polling_config_service.dart';
+import '../services/alert_polling_service.dart';
 import '../theme/app_theme.dart';
 
-class StrategyScreen extends StatelessWidget {
+class StrategyScreen extends StatefulWidget {
   const StrategyScreen({super.key});
+
+  @override
+  State<StrategyScreen> createState() => _StrategyScreenState();
+}
+
+class _StrategyScreenState extends State<StrategyScreen> {
+  AlertPollingConfig _alertConfig = AlertPollingConfig.defaultConfig;
+  bool _loadingAlertConfig = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadAlertConfig();
+  }
+
+  Future<void> _loadAlertConfig() async {
+    final config = await AlertPollingConfigService().load();
+    if (!mounted) return;
+    setState(() {
+      _alertConfig = config;
+      _loadingAlertConfig = false;
+    });
+  }
+
+  Future<void> _saveAlertConfig(AlertPollingConfig config) async {
+    setState(() => _alertConfig = config);
+    await AlertPollingConfigService().save(config);
+    await AlertPollingService().refreshConfig();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..clearSnackBars()
+      ..showSnackBar(const SnackBar(content: Text('价格提醒轮询设置已保存')));
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -11,12 +46,18 @@ class StrategyScreen extends StatelessWidget {
       appBar: AppBar(title: const Text('策略')),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 88),
-        children: const [
-          _HeaderCard(),
-          SizedBox(height: 16),
-          _SectionTitle(title: '名词解释'),
-          SizedBox(height: 10),
-          _TermCard(
+        children: [
+          const _HeaderCard(),
+          const SizedBox(height: 16),
+          _AlertPollingSettingsCard(
+            config: _alertConfig,
+            loading: _loadingAlertConfig,
+            onChanged: _saveAlertConfig,
+          ),
+          const SizedBox(height: 16),
+          const _SectionTitle(title: '名词解释'),
+          const SizedBox(height: 10),
+          const _TermCard(
             terms: [
               _Term(
                 name: '播种',
@@ -64,37 +105,37 @@ class StrategyScreen extends StatelessWidget {
               ),
             ],
           ),
-          SizedBox(height: 16),
-          _SectionTitle(title: '核心框架'),
-          SizedBox(height: 10),
-          _FlowStep(
+          const SizedBox(height: 16),
+          const _SectionTitle(title: '核心框架'),
+          const SizedBox(height: 10),
+          const _FlowStep(
             index: '1',
             title: '选种',
             description: '股票看公司质量，基金看指数/策略、管理人、费率和长期有效性。',
             items: ['标的长期有效', '规则能看懂', '费用可接受', '估值进入可接受区间'],
           ),
-          _FlowStep(
+          const _FlowStep(
             index: '2',
             title: '播种',
             description: '把计划资金拆成多批，按价格区间播下去，让配置动作服从事前计划。',
             items: ['单股仓位封顶', '首批轻仓试错', '每批间距足够大', '不因为涨跌临时追单'],
           ),
-          _FlowStep(
+          const _FlowStep(
             index: '3',
             title: '回本',
             description: '达到预设回收条件后记录一部分现金回笼，优先把本金收回来，而不是追求最高点。',
             items: ['回收本金优先于扩大仓位', '回本后剩余资产单独标记', '不把浮盈作为确定收益', '税费和手续费计入成本'],
           ),
-          _FlowStep(
+          const _FlowStep(
             index: '4',
             title: '留种',
             description: '本金回笼后，剩余股份或份额成为零成本仓位，后续重点是跟踪标的质量和退出条件。',
             items: ['股票观察基本面', '基金观察策略漂移', '分红记录入账', '避免为了零成本标签死扛'],
           ),
-          SizedBox(height: 16),
-          _SectionTitle(title: '播种前检查'),
-          SizedBox(height: 10),
-          _ChecklistCard(
+          const SizedBox(height: 16),
+          const _SectionTitle(title: '播种前检查'),
+          const SizedBox(height: 10),
+          const _ChecklistCard(
             items: [
               '这家公司三年后仍可能存在且有竞争力。',
               '这只基金跟踪的指数或投资策略长期逻辑仍然成立。',
@@ -104,11 +145,207 @@ class StrategyScreen extends StatelessWidget {
               '已经写好回收本金的触发价和回收数量。',
             ],
           ),
-          SizedBox(height: 16),
-          _SectionTitle(title: '退出红线'),
-          SizedBox(height: 10),
-          _WarningCard(),
+          const SizedBox(height: 16),
+          const _SectionTitle(title: '退出红线'),
+          const SizedBox(height: 10),
+          const _WarningCard(),
         ],
+      ),
+    );
+  }
+}
+
+class _AlertPollingSettingsCard extends StatelessWidget {
+  final AlertPollingConfig config;
+  final bool loading;
+  final ValueChanged<AlertPollingConfig> onChanged;
+
+  const _AlertPollingSettingsCard({
+    required this.config,
+    required this.loading,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    const intervals = [1, 3, 5, 10, 15, 30, 60];
+    final activeInterval =
+        intervals.contains(config.intervalMinutes) ? config.intervalMinutes : 3;
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppTheme.bgCard,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppTheme.borderColor, width: 0.5),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.notifications_active_outlined,
+                  color: AppTheme.accentGold, size: 20),
+              const SizedBox(width: 9),
+              const Expanded(
+                child: Text(
+                  '价格提醒轮询',
+                  style: TextStyle(
+                    color: AppTheme.textPrimary,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              Switch(
+                value: config.enabled,
+                onChanged: loading
+                    ? null
+                    : (value) => onChanged(config.copyWith(enabled: value)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(
+            config.enabled
+                ? '周一至周五 ${config.startText}-${config.endText} · 每 ${config.intervalMinutes} 分钟'
+                : '已关闭全局轮询',
+            style: const TextStyle(
+              color: AppTheme.textSecondary,
+              fontSize: 13,
+              height: 1.35,
+            ),
+          ),
+          const SizedBox(height: 14),
+          DropdownButtonFormField<int>(
+            initialValue: activeInterval,
+            decoration: const InputDecoration(labelText: '轮询间隔'),
+            dropdownColor: AppTheme.bgCardLight,
+            items: intervals
+                .map(
+                  (minutes) => DropdownMenuItem<int>(
+                    value: minutes,
+                    child: Text('$minutes 分钟'),
+                  ),
+                )
+                .toList(),
+            onChanged: loading
+                ? null
+                : (value) {
+                    if (value == null) return;
+                    onChanged(config.copyWith(intervalMinutes: value));
+                  },
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: _TimeButton(
+                  label: '开始',
+                  value: config.startText,
+                  onTap: loading
+                      ? null
+                      : () => _pickTime(
+                            context,
+                            initialMinutes: config.startMinutes,
+                            onPicked: (minutes) => onChanged(
+                              config.copyWith(startMinutes: minutes),
+                            ),
+                          ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _TimeButton(
+                  label: '结束',
+                  value: config.endText,
+                  onTap: loading
+                      ? null
+                      : () => _pickTime(
+                            context,
+                            initialMinutes: config.endMinutes,
+                            onPicked: (minutes) => onChanged(
+                              config.copyWith(endMinutes: minutes),
+                            ),
+                          ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _pickTime(
+    BuildContext context, {
+    required int initialMinutes,
+    required ValueChanged<int> onPicked,
+  }) async {
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay(
+        hour: initialMinutes ~/ 60,
+        minute: initialMinutes % 60,
+      ),
+    );
+    if (picked == null) return;
+    onPicked(picked.hour * 60 + picked.minute);
+  }
+}
+
+class _TimeButton extends StatelessWidget {
+  final String label;
+  final String value;
+  final VoidCallback? onTap;
+
+  const _TimeButton({
+    required this.label,
+    required this.value,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(10),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+        decoration: BoxDecoration(
+          color: AppTheme.bgCardLight,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: AppTheme.borderColor, width: 0.5),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.schedule, color: AppTheme.textMuted, size: 18),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    label,
+                    style: const TextStyle(
+                      color: AppTheme.textMuted,
+                      fontSize: 11,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    value,
+                    style: const TextStyle(
+                      color: AppTheme.textPrimary,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
