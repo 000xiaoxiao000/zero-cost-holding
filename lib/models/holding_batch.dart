@@ -20,6 +20,12 @@ class HoldingBatch {
   final double? planCommission;
   final String? planWeightModeKey;
   final int? planBatchIndex;
+  final double? originalPlanBuyPrice;
+  final double? originalPlanQuantity;
+  final double? originalPlanCost;
+  final double? originalPlanCommission;
+  final double? originalPlanRecoverPrice;
+  final double? originalPlanRecoverQuantity;
   final double? zeroCostAlertPrice;
   final double? zeroCostAlertQuantity;
   final double? irrigationAlertPrice;
@@ -53,6 +59,12 @@ class HoldingBatch {
     this.planCommission,
     this.planWeightModeKey,
     this.planBatchIndex,
+    this.originalPlanBuyPrice,
+    this.originalPlanQuantity,
+    this.originalPlanCost,
+    this.originalPlanCommission,
+    this.originalPlanRecoverPrice,
+    this.originalPlanRecoverQuantity,
     this.zeroCostAlertPrice,
     this.zeroCostAlertQuantity,
     this.irrigationAlertPrice,
@@ -82,7 +94,27 @@ class HoldingBatch {
       planRebound != null ||
       planCommission != null ||
       planWeightModeKey != null ||
-      planBatchIndex != null;
+      planBatchIndex != null ||
+      hasOriginalPlanSnapshot;
+
+  bool get hasOriginalPlanSnapshot =>
+      originalPlanBuyPrice != null ||
+      originalPlanQuantity != null ||
+      originalPlanCost != null ||
+      originalPlanCommission != null ||
+      originalPlanRecoverPrice != null ||
+      originalPlanRecoverQuantity != null;
+
+  bool get deviatesFromOriginalPlan {
+    bool changed(double? planned, double actual, {double tolerance = 0.01}) {
+      if (planned == null) return false;
+      return (planned - actual).abs() > tolerance;
+    }
+
+    return changed(originalPlanBuyPrice, buyPrice, tolerance: 0.001) ||
+        changed(originalPlanQuantity, quantity) ||
+        changed(originalPlanCommission, commission);
+  }
 
   String get assetTypeLabel => isFund ? '基金' : '股票';
 
@@ -144,6 +176,12 @@ class HoldingBatch {
       'plan_commission': planCommission,
       'plan_weight_mode': planWeightModeKey,
       'plan_batch_index': planBatchIndex,
+      'original_plan_buy_price': originalPlanBuyPrice,
+      'original_plan_quantity': originalPlanQuantity,
+      'original_plan_cost': originalPlanCost,
+      'original_plan_commission': originalPlanCommission,
+      'original_plan_recover_price': originalPlanRecoverPrice,
+      'original_plan_recover_quantity': originalPlanRecoverQuantity,
       'zero_cost_alert_price': zeroCostAlertPrice,
       'zero_cost_alert_quantity': zeroCostAlertQuantity,
       'irrigation_alert_price': irrigationAlertPrice,
@@ -180,6 +218,13 @@ class HoldingBatch {
       planCommission: map['plan_commission']?.toDouble(),
       planWeightModeKey: map['plan_weight_mode'],
       planBatchIndex: map['plan_batch_index'],
+      originalPlanBuyPrice: map['original_plan_buy_price']?.toDouble(),
+      originalPlanQuantity: map['original_plan_quantity']?.toDouble(),
+      originalPlanCost: map['original_plan_cost']?.toDouble(),
+      originalPlanCommission: map['original_plan_commission']?.toDouble(),
+      originalPlanRecoverPrice: map['original_plan_recover_price']?.toDouble(),
+      originalPlanRecoverQuantity:
+          map['original_plan_recover_quantity']?.toDouble(),
       zeroCostAlertPrice: map['zero_cost_alert_price']?.toDouble(),
       zeroCostAlertQuantity: map['zero_cost_alert_quantity']?.toDouble(),
       irrigationAlertPrice: map['irrigation_alert_price']?.toDouble(),
@@ -227,6 +272,12 @@ class HoldingBatch {
       planCommission: planCommission,
       planWeightModeKey: planWeightModeKey,
       planBatchIndex: planBatchIndex,
+      originalPlanBuyPrice: originalPlanBuyPrice,
+      originalPlanQuantity: originalPlanQuantity,
+      originalPlanCost: originalPlanCost,
+      originalPlanCommission: originalPlanCommission,
+      originalPlanRecoverPrice: originalPlanRecoverPrice,
+      originalPlanRecoverQuantity: originalPlanRecoverQuantity,
       zeroCostAlertPrice: zeroCostAlertPrice,
       zeroCostAlertQuantity: zeroCostAlertQuantity,
       irrigationAlertPrice: irrigationAlertPrice,

@@ -1141,6 +1141,17 @@ class _BatchRow extends ConsumerWidget {
                         ),
                       ),
                     ],
+                    if (batch.deviatesFromOriginalPlan) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        _planDeviationText(batch),
+                        style: const TextStyle(
+                          color: AppTheme.accentGold,
+                          fontSize: 12,
+                          height: 1.35,
+                        ),
+                      ),
+                    ],
                     if (batch.remainingQuantity <= 0 && !batch.isZeroCost) ...[
                       const SizedBox(height: 2),
                       const Text(
@@ -1232,10 +1243,12 @@ class _BatchRow extends ConsumerWidget {
             market: batch.market,
             assetType: batch.assetType,
             currentPrice: batch.planStartPrice ?? batch.buyPrice,
-            planBuyPrice: batch.buyPrice,
-            planQuantity: batch.quantity,
-            planRecoverPrice: batch.planRecoverPrice,
-            planRecoverQuantity: batch.planRecoverQuantity,
+            planBuyPrice: batch.originalPlanBuyPrice ?? batch.buyPrice,
+            planQuantity: batch.originalPlanQuantity ?? batch.quantity,
+            planRecoverPrice:
+                batch.originalPlanRecoverPrice ?? batch.planRecoverPrice,
+            planRecoverQuantity:
+                batch.originalPlanRecoverQuantity ?? batch.planRecoverQuantity,
             planCapital: batch.planCapital,
             planStartPrice: batch.planStartPrice,
             planSeedCount: batch.planSeedCount,
@@ -2154,6 +2167,28 @@ _ReminderStatus? _planRecoverReminderStatus(WidgetRef ref, HoldingBatch batch) {
                   recoverAlertEnabled: false,
                 ),
   );
+}
+
+String _planDeviationText(HoldingBatch batch) {
+  final parts = <String>[];
+  final originalPrice = batch.originalPlanBuyPrice;
+  final originalQuantity = batch.originalPlanQuantity;
+  if (originalPrice != null) {
+    parts.add('原计划价 ¥${Formatters.price(originalPrice)}');
+  }
+  if (originalQuantity != null) {
+    parts.add(
+        '原计划 ${Formatters.quantity(originalQuantity)}${batch.quantityUnit}');
+  }
+  final originalRecoverPrice = batch.originalPlanRecoverPrice;
+  final originalRecoverQuantity = batch.originalPlanRecoverQuantity;
+  if (originalRecoverPrice != null && originalRecoverQuantity != null) {
+    parts.add(
+      '原回收 ¥${Formatters.price(originalRecoverPrice)} / ${Formatters.quantity(originalRecoverQuantity)}${batch.quantityUnit}',
+    );
+  }
+  if (parts.isEmpty) return '实际成交已偏离原计划，回收计划已按实际成交修正';
+  return '实际成交已偏离原计划：${parts.join(' · ')}';
 }
 
 _ReminderStatus? _zeroCostReminderStatus(WidgetRef ref, HoldingBatch batch) {

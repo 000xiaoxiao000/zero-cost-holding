@@ -18,7 +18,7 @@ class DatabaseHelper {
     final path = join(dbPath, 'stock_holding.db');
     return await openDatabase(
       path,
-      version: 14,
+      version: 15,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
       onOpen: _ensureSchema,
@@ -62,6 +62,12 @@ class DatabaseHelper {
         plan_commission REAL,
         plan_weight_mode TEXT,
         plan_batch_index INTEGER,
+        original_plan_buy_price REAL,
+        original_plan_quantity REAL,
+        original_plan_cost REAL,
+        original_plan_commission REAL,
+        original_plan_recover_price REAL,
+        original_plan_recover_quantity REAL,
         zero_cost_alert_price REAL,
         zero_cost_alert_quantity REAL,
         irrigation_alert_price REAL,
@@ -154,6 +160,9 @@ class DatabaseHelper {
     if (oldVersion < 14) {
       await _ensureZeroCostAlertToggleColumns(db);
     }
+    if (oldVersion < 15) {
+      await _ensureOriginalPlanSnapshotColumns(db);
+    }
   }
 
   Future<void> _ensureSchema(Database db) async {
@@ -176,6 +185,7 @@ class DatabaseHelper {
       definition: "TEXT NOT NULL DEFAULT 'SH'",
     );
     await _ensurePlanSnapshotColumns(db);
+    await _ensureOriginalPlanSnapshotColumns(db);
     await _addColumnIfMissing(
       db,
       table: 'holding_batches',
@@ -344,6 +354,45 @@ class DatabaseHelper {
       table: 'holding_batches',
       column: 'plan_batch_index',
       definition: 'INTEGER',
+    );
+  }
+
+  Future<void> _ensureOriginalPlanSnapshotColumns(Database db) async {
+    await _addColumnIfMissing(
+      db,
+      table: 'holding_batches',
+      column: 'original_plan_buy_price',
+      definition: 'REAL',
+    );
+    await _addColumnIfMissing(
+      db,
+      table: 'holding_batches',
+      column: 'original_plan_quantity',
+      definition: 'REAL',
+    );
+    await _addColumnIfMissing(
+      db,
+      table: 'holding_batches',
+      column: 'original_plan_cost',
+      definition: 'REAL',
+    );
+    await _addColumnIfMissing(
+      db,
+      table: 'holding_batches',
+      column: 'original_plan_commission',
+      definition: 'REAL',
+    );
+    await _addColumnIfMissing(
+      db,
+      table: 'holding_batches',
+      column: 'original_plan_recover_price',
+      definition: 'REAL',
+    );
+    await _addColumnIfMissing(
+      db,
+      table: 'holding_batches',
+      column: 'original_plan_recover_quantity',
+      definition: 'REAL',
     );
   }
 

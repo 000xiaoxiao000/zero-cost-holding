@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -160,31 +162,121 @@ class _AddHoldingBatchScreenState extends ConsumerState<AddHoldingBatchScreen> {
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
     final ctx = widget.stockContext;
+    final buyPrice = double.parse(_priceController.text);
+    final quantity = double.parse(_qtyController.text);
+    final commission = double.tryParse(_commissionController.text) ?? 0.0;
+    final executionPlan = _executionPlanSnapshot(
+      buyPrice: buyPrice,
+      quantity: quantity,
+      commission: commission,
+    );
+    final originalPlan = _originalPlanSnapshot;
     final batch = HoldingBatch(
       assetType: _assetType,
       market: _market,
       stockCode: _codeController.text.trim(),
       stockName: _nameController.text.trim(),
-      buyPrice: double.parse(_priceController.text),
-      quantity: double.parse(_qtyController.text),
-      commission: double.tryParse(_commissionController.text) ?? 0.0,
+      buyPrice: buyPrice,
+      quantity: quantity,
+      commission: commission,
       buyDate: _buyDate,
       note: _noteController.text.trim().isEmpty
           ? null
           : _noteController.text.trim(),
-      planRecoverPrice: ctx?.planRecoverPrice,
-      planRecoverQuantity: ctx?.planRecoverQuantity,
+      planRecoverPrice: executionPlan.recoverPrice,
+      planRecoverQuantity: executionPlan.recoverQuantity,
       planCapital: ctx?.planCapital,
       planStartPrice: ctx?.planStartPrice,
       planSeedCount: ctx?.planSeedCount,
       planDropStep: ctx?.planDropStep,
       planRebound: ctx?.planRebound,
-      planCommission: ctx?.planCommission,
+      planCommission: commission,
       planWeightModeKey: ctx?.planWeightModeKey,
       planBatchIndex: ctx?.planBatchIndex,
+      originalPlanBuyPrice: originalPlan.buyPrice,
+      originalPlanQuantity: originalPlan.quantity,
+      originalPlanCost: originalPlan.cost,
+      originalPlanCommission: originalPlan.commission,
+      originalPlanRecoverPrice: originalPlan.recoverPrice,
+      originalPlanRecoverQuantity: originalPlan.recoverQuantity,
     );
     await ref.read(holdingPositionsProvider.notifier).addBatch(batch);
     if (mounted) AppNavigation.goHomeTab(context, HomeTab.holding);
+  }
+
+  ({
+    double? buyPrice,
+    double? quantity,
+    double? cost,
+    double? commission,
+    double? recoverPrice,
+    double? recoverQuantity,
+  }) get _originalPlanSnapshot {
+    final ctx = widget.stockContext;
+    if (ctx == null) {
+      return (
+        buyPrice: null,
+        quantity: null,
+        cost: null,
+        commission: null,
+        recoverPrice: null,
+        recoverQuantity: null,
+      );
+    }
+    final buyPrice = ctx.planBuyPrice;
+    final quantity = ctx.planQuantity;
+    final commission = ctx.planCommission;
+    final cost = buyPrice != null && quantity != null
+        ? buyPrice * quantity + (commission ?? 0.0)
+        : null;
+    return (
+      buyPrice: buyPrice,
+      quantity: quantity,
+      cost: cost,
+      commission: commission,
+      recoverPrice: ctx.planRecoverPrice,
+      recoverQuantity: ctx.planRecoverQuantity,
+    );
+  }
+
+  ({double? recoverPrice, double? recoverQuantity}) _executionPlanSnapshot({
+    required double buyPrice,
+    required double quantity,
+    required double commission,
+  }) {
+    final ctx = widget.stockContext;
+    if (ctx == null) return (recoverPrice: null, recoverQuantity: null);
+    final recoverPrice = _executionRecoverPrice(buyPrice);
+    if (recoverPrice == null || recoverPrice <= 0 || quantity <= 0) {
+      return (recoverPrice: recoverPrice, recoverQuantity: null);
+    }
+    final totalCost = buyPrice * quantity + commission;
+    final recoverQuantity = math.min(
+      quantity,
+      ((totalCost / recoverPrice / 100).ceil() * 100).toDouble(),
+    );
+    return (
+      recoverPrice: recoverPrice,
+      recoverQuantity: recoverQuantity,
+    );
+  }
+
+  double? _executionRecoverPrice(double buyPrice) {
+    final ctx = widget.stockContext;
+    if (ctx == null) return null;
+    final rebound = ctx.planRebound;
+    if (rebound != null && rebound > 0) {
+      return buyPrice * (1 + rebound / 100);
+    }
+    final originalBuyPrice = ctx.planBuyPrice;
+    final originalRecoverPrice = ctx.planRecoverPrice;
+    if (originalBuyPrice != null &&
+        originalBuyPrice > 0 &&
+        originalRecoverPrice != null &&
+        originalRecoverPrice > 0) {
+      return buyPrice * originalRecoverPrice / originalBuyPrice;
+    }
+    return originalRecoverPrice;
   }
 
   double get _totalCost {
