@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -43,6 +44,8 @@ class _HarvestCalculatorScreenState
   bool _atrAutoLoaded = false;
   bool _highAutoLoading = false;
   bool _highAutoLoaded = false;
+  Timer? _alertSyncDebounce;
+  String? _lastAlertSyncSignature;
 
   @override
   void initState() {
@@ -75,6 +78,7 @@ class _HarvestCalculatorScreenState
         if (_mode == 'chandelier') _autoLoadRecentHigh();
       });
     }
+    WidgetsBinding.instance.addPostFrameCallback((_) => _scheduleAlertSync());
   }
 
   /// 吊灯模式自动拉取近 22 日最高价作为止盈基准
@@ -91,6 +95,7 @@ class _HarvestCalculatorScreenState
         _highAutoLoading = false;
         _highAutoLoaded = true;
       });
+      _scheduleAlertSync();
     } else {
       setState(() => _highAutoLoading = false);
     }
@@ -109,6 +114,7 @@ class _HarvestCalculatorScreenState
         _atrAutoLoading = false;
         _atrAutoLoaded = true;
       });
+      _scheduleAlertSync();
     } else {
       setState(() => _atrAutoLoading = false);
     }
@@ -289,8 +295,46 @@ class _HarvestCalculatorScreenState
     messenger.showSnackBar(SnackBar(content: Text(message)));
   }
 
+  void _handlePlanChanged() {
+    setState(() {});
+    _scheduleAlertSync();
+  }
+
+  void _scheduleAlertSync() {
+    if (widget.targetBatchId == null) return;
+    _alertSyncDebounce?.cancel();
+    _alertSyncDebounce = Timer(
+      const Duration(milliseconds: 450),
+      _syncHarvestAlertsToBatch,
+    );
+  }
+
+  Future<void> _syncHarvestAlertsToBatch() async {
+    final batchId = widget.targetBatchId;
+    if (batchId == null) return;
+    final plan = _plan;
+    if (plan.upperPrice <= 0 || plan.lowerPrice <= 0) return;
+    final signature = [
+      batchId,
+      plan.upperPrice.toStringAsFixed(4),
+      plan.zeroCostSellQty.toStringAsFixed(4),
+      plan.lowerPrice.toStringAsFixed(4),
+      plan.suggestedBuyQty.toStringAsFixed(4),
+    ].join(':');
+    if (signature == _lastAlertSyncSignature) return;
+    _lastAlertSyncSignature = signature;
+    await ref.read(holdingPositionsProvider.notifier).updateBatchHarvestAlerts(
+          batchId,
+          zeroCostAlertPrice: plan.upperPrice,
+          zeroCostAlertQuantity: plan.zeroCostSellQty,
+          irrigationAlertPrice: plan.lowerPrice,
+          irrigationAlertQuantity: plan.suggestedBuyQty,
+        );
+  }
+
   @override
   void dispose() {
+    _alertSyncDebounce?.cancel();
     _currentPriceController.dispose();
     _remainingCostController.dispose();
     _quantityController.dispose();
@@ -393,8 +437,9 @@ class _HarvestCalculatorScreenState
               setState(() => _mode = value);
               if (value == 'atr' || value == 'chandelier') _autoLoadAtr();
               if (value == 'chandelier') _autoLoadRecentHigh();
+              _scheduleAlertSync();
             },
-            onChanged: () => setState(() {}),
+            onChanged: _handlePlanChanged,
           ),
           const SizedBox(height: 16),
           _RangeCard(plan: plan, mode: _mode),

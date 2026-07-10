@@ -102,6 +102,22 @@ class HoldingPositionsNotifier
     await load();
   }
 
+  Future<void> updateBatchHarvestAlerts(
+    int batchId, {
+    required double zeroCostAlertPrice,
+    required double zeroCostAlertQuantity,
+    required double irrigationAlertPrice,
+    required double irrigationAlertQuantity,
+  }) async {
+    await _db.updateHoldingBatch(batchId, {
+      'zero_cost_alert_price': zeroCostAlertPrice,
+      'zero_cost_alert_quantity': zeroCostAlertQuantity,
+      'irrigation_alert_price': irrigationAlertPrice,
+      'irrigation_alert_quantity': irrigationAlertQuantity,
+    });
+    await load();
+  }
+
   Future<void> deleteBatch(int id) async {
     await _db.deleteHoldingBatch(id);
     await load();
