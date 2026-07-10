@@ -197,50 +197,97 @@ class _SeedPlanScreenState extends State<SeedPlanScreen>
   double get _commission => double.tryParse(_commissionController.text) ?? 0;
 
   /// 正金字塔权重：第 i 批（0-indexed）权重 = i+1；归一化后返回每批资金
-  List<double> _trancheCapitals() {
+  List<double> _trancheWeights() {
     final n = _seedCount;
     if (n <= 0) return [];
     switch (_weightMode) {
       case WeightMode.equal:
-        return List.filled(n, _capital / n);
+        return List.filled(n, 1.0);
       case WeightMode.pyramid:
-        // 权重递增：1, 2, 3, ..., n
-        final total = n * (n + 1) / 2;
-        return List.generate(n, (i) => _capital * (i + 1) / total);
+        return List.generate(n, (i) => (i + 1).toDouble());
       case WeightMode.inverted:
-        // 权重递减：n, n-1, ..., 1
-        final total = n * (n + 1) / 2;
-        return List.generate(n, (i) => _capital * (n - i) / total);
+        return List.generate(n, (i) => (_seedCount - i).toDouble());
     }
+  }
+
+  double _recoverQuantity({
+    required double quantity,
+    required double cost,
+    required double targetPrice,
+  }) {
+    if (targetPrice <= 0 || quantity <= 0) return 0.0;
+    return math.min(
+      quantity,
+      ((cost / targetPrice / 100).ceil() * 100).toDouble(),
+    );
+  }
+
+  double? _minimumCostWithFreeSeed(double buyPrice, double targetPrice) {
+    if (buyPrice <= 0 || targetPrice <= buyPrice) return null;
+    for (var quantity = 100.0; quantity <= 1000000; quantity += 100) {
+      final cost = quantity * buyPrice + _commission;
+      final recoverQuantity = _recoverQuantity(
+        quantity: quantity,
+        cost: cost,
+        targetPrice: targetPrice,
+      );
+      if (quantity - recoverQuantity > 0) return cost;
+    }
+    return null;
   }
 
   List<_SeedSlice> get _plan {
     if (_capital <= 0 || _startPrice <= 0 || _seedCount <= 0) return [];
-    final capitals = _trancheCapitals();
-    return List.generate(_seedCount, (i) {
+    final weights = _trancheWeights();
+    final weightTotal = weights.fold(0.0, (sum, weight) => sum + weight);
+    final specs = List.generate(_seedCount, (i) {
       final buyPrice = _startPrice * math.pow(1 - _dropStep, i);
-      final trancheCapital = capitals[i];
-      final quantity =
-          (((trancheCapital - _commission) / buyPrice / 100).floor() * 100)
-              .toDouble();
-      final cost = quantity * buyPrice + _commission;
       final targetPrice = buyPrice * (1 + _rebound);
-      final recoverQuantity = targetPrice > 0
-          ? math.min(
-              quantity,
-              ((cost / targetPrice / 100).ceil() * 100).toDouble(),
-            )
-          : 0.0;
-      return _SeedSlice(
-        index: i + 1,
+      final minimumCost = _minimumCostWithFreeSeed(
+        buyPrice.toDouble(),
+        targetPrice.toDouble(),
+      );
+      return (
         buyPrice: buyPrice.toDouble(),
+        targetPrice: targetPrice.toDouble(),
+        minimumCost: minimumCost,
+      );
+    });
+    final minimumTotal = specs.fold(
+      0.0,
+      (sum, spec) => spec.minimumCost == null ? sum : sum + spec.minimumCost!,
+    );
+    final canReserveSeedForEveryBatch =
+        specs.every((spec) => spec.minimumCost != null) &&
+            minimumTotal <= _capital;
+
+    return List.generate(_seedCount, (i) {
+      final spec = specs[i];
+      final weightedCapital =
+          weightTotal > 0 ? _capital * weights[i] / weightTotal : 0.0;
+      final trancheCapital = canReserveSeedForEveryBatch
+          ? spec.minimumCost! +
+              (_capital - minimumTotal) * weights[i] / weightTotal
+          : weightedCapital;
+      final quantity =
+          (((trancheCapital - _commission) / spec.buyPrice / 100).floor() * 100)
+              .toDouble();
+      final cost = quantity * spec.buyPrice + _commission;
+      final recoverQuantity = _recoverQuantity(
         quantity: quantity,
         cost: cost,
-        targetPrice: targetPrice,
+        targetPrice: spec.targetPrice,
+      );
+      return _SeedSlice(
+        index: i + 1,
+        buyPrice: spec.buyPrice,
+        quantity: quantity,
+        cost: cost,
+        targetPrice: spec.targetPrice,
         recoverQuantity: recoverQuantity,
         freeQuantity: math.max(0.0, quantity - recoverQuantity),
       );
-    }).where((s) => s.quantity > 0).toList();
+    }).where((s) => s.quantity > 0 && s.freeQuantity > 0).toList();
   }
 
   // ── 定投计划 getters
