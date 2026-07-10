@@ -585,7 +585,7 @@ class _NoFilteredHolding extends StatelessWidget {
 
 class _HoldingCard extends ConsumerStatefulWidget {
   final HoldingPosition position;
-  const _HoldingCard({super.key, required this.position});
+  const _HoldingCard({Key? key, required this.position}) : super(key: key);
 
   @override
   ConsumerState<_HoldingCard> createState() => _HoldingCardState();
@@ -1274,10 +1274,9 @@ class _BatchRow extends ConsumerWidget {
             name: batch.stockName,
             market: batch.market,
             assetType: batch.assetType,
-            currentPrice: batch.planStartPrice ??
-                (batch.effectiveCostPrice > 0
-                    ? batch.effectiveCostPrice
-                    : batch.buyPrice),
+            currentPrice: batch.effectiveCostPrice > 0
+                ? batch.effectiveCostPrice
+                : batch.buyPrice,
             remainingCost: batch.effectiveRemainingCost,
             remainingQty: batch.remainingQuantity,
             avgCostPrice: batch.effectiveCostPrice,
