@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../navigation/app_navigation.dart';
 import '../theme/app_theme.dart';
 import '../providers/stock_providers.dart';
 import '../models/stock.dart';
@@ -63,6 +64,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                 : null,
           ),
         ),
+        actions: const [HomeTabMenuButton()],
       ),
       body: results.isEmpty
           ? const _SearchHint()

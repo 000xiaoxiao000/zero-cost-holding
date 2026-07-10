@@ -12,7 +12,7 @@ class HoldingPositionsNotifier
     final result = <String, List<HoldingBatch>>{};
     final rows = await _db.getHoldingBatches();
     for (final batch in rows.map(HoldingBatch.fromMap)) {
-      final key = '${batch.assetType}:${batch.stockCode}';
+      final key = '${batch.assetType}:${batch.market}:${batch.stockCode}';
       result.putIfAbsent(key, () => []).add(batch);
     }
     state = result;
@@ -24,11 +24,33 @@ class HoldingPositionsNotifier
   }
 
   Future<void> recordSell(
-      int batchId, String code, double sellPrice, double sellQty) async {
+    int batchId,
+    double sellPrice,
+    double sellQty, {
+    bool replace = false,
+    DateTime? sellDate,
+  }) async {
+    HoldingBatch? existing;
+    for (final batches in state.values) {
+      for (final batch in batches) {
+        if (batch.id == batchId) {
+          existing = batch;
+          break;
+        }
+      }
+      if (existing != null) break;
+    }
+    final previousQty = replace ? 0.0 : existing?.sellQuantity ?? 0.0;
+    final previousAmount =
+        replace ? 0.0 : (existing?.sellPrice ?? 0.0) * previousQty;
+    final maxQty = existing?.quantity ?? double.infinity;
+    final nextQty = (previousQty + sellQty).clamp(0.0, maxQty);
+    final nextAmount = previousAmount + sellPrice * sellQty;
+    final nextPrice = nextQty > 0 ? nextAmount / nextQty : sellPrice;
     await _db.updateHoldingBatch(batchId, {
-      'sell_price': sellPrice,
-      'sell_quantity': sellQty,
-      'sell_date': DateTime.now().toIso8601String(),
+      'sell_price': nextPrice,
+      'sell_quantity': nextQty,
+      'sell_date': (sellDate ?? DateTime.now()).toIso8601String(),
     });
     await load();
   }
@@ -47,10 +69,12 @@ class HoldingPositionsNotifier
 
   Future<void> deletePosition({
     required String assetType,
+    required String market,
     required String stockCode,
   }) async {
     await _db.deleteHoldingBatchesForAsset(
       assetType: assetType,
+      market: market,
       stockCode: stockCode,
     );
     await load();
@@ -63,6 +87,7 @@ class HoldingPositionsNotifier
       final first = batches.isNotEmpty ? batches.first : null;
       return HoldingPosition(
         assetType: first?.assetType ?? 'stock',
+        market: first?.market ?? 'SH',
         stockCode: first?.stockCode ?? entry.key,
         stockName: name,
         batches: batches,

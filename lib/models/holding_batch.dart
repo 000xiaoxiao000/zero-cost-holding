@@ -2,6 +2,7 @@
 class HoldingBatch {
   final int? id;
   final String assetType; // stock / fund
+  final String market; // SH / SZ / BJ
   final String stockCode;
   final String stockName;
   final double buyPrice;
@@ -9,6 +10,15 @@ class HoldingBatch {
   final double commission;
   final DateTime buyDate;
   final String? note;
+  final double? planRecoverPrice;
+  final double? planRecoverQuantity;
+  final double? planCapital;
+  final double? planStartPrice;
+  final int? planSeedCount;
+  final double? planDropStep;
+  final double? planRebound;
+  final double? planCommission;
+  final String? planWeightModeKey;
   final double cashIncome;
   double? sellPrice;
   double? sellQuantity;
@@ -17,6 +27,7 @@ class HoldingBatch {
   HoldingBatch({
     this.id,
     this.assetType = 'stock',
+    this.market = 'SH',
     required this.stockCode,
     required this.stockName,
     required this.buyPrice,
@@ -24,6 +35,15 @@ class HoldingBatch {
     this.commission = 0.0,
     required this.buyDate,
     this.note,
+    this.planRecoverPrice,
+    this.planRecoverQuantity,
+    this.planCapital,
+    this.planStartPrice,
+    this.planSeedCount,
+    this.planDropStep,
+    this.planRebound,
+    this.planCommission,
+    this.planWeightModeKey,
     this.cashIncome = 0.0,
     this.sellPrice,
     this.sellQuantity,
@@ -35,6 +55,17 @@ class HoldingBatch {
   double get avgCost => quantity > 0 ? totalCost / quantity : 0.0;
 
   bool get isFund => assetType == 'fund';
+
+  bool get hasPlanSnapshot =>
+      planCapital != null ||
+      planRecoverPrice != null ||
+      planRecoverQuantity != null ||
+      planStartPrice != null ||
+      planSeedCount != null ||
+      planDropStep != null ||
+      planRebound != null ||
+      planCommission != null ||
+      planWeightModeKey != null;
 
   String get assetTypeLabel => isFund ? '基金' : '股票';
 
@@ -78,6 +109,7 @@ class HoldingBatch {
     return {
       if (id != null) 'id': id,
       'asset_type': assetType,
+      'market': market,
       'stock_code': stockCode,
       'stock_name': stockName,
       'buy_price': buyPrice,
@@ -85,6 +117,15 @@ class HoldingBatch {
       'commission': commission,
       'buy_date': buyDate.toIso8601String(),
       'note': note,
+      'plan_recover_price': planRecoverPrice,
+      'plan_recover_quantity': planRecoverQuantity,
+      'plan_capital': planCapital,
+      'plan_start_price': planStartPrice,
+      'plan_seed_count': planSeedCount,
+      'plan_drop_step': planDropStep,
+      'plan_rebound': planRebound,
+      'plan_commission': planCommission,
+      'plan_weight_mode': planWeightModeKey,
       'cash_income': cashIncome,
       'sell_price': sellPrice,
       'sell_quantity': sellQuantity,
@@ -96,6 +137,7 @@ class HoldingBatch {
     return HoldingBatch(
       id: map['id'],
       assetType: map['asset_type'] ?? 'stock',
+      market: map['market'] ?? 'SH',
       stockCode: map['stock_code'] ?? '',
       stockName: map['stock_name'] ?? '',
       buyPrice: (map['buy_price'] ?? 0.0).toDouble(),
@@ -103,6 +145,15 @@ class HoldingBatch {
       commission: (map['commission'] ?? 0.0).toDouble(),
       buyDate: DateTime.parse(map['buy_date']),
       note: map['note'],
+      planRecoverPrice: map['plan_recover_price']?.toDouble(),
+      planRecoverQuantity: map['plan_recover_quantity']?.toDouble(),
+      planCapital: map['plan_capital']?.toDouble(),
+      planStartPrice: map['plan_start_price']?.toDouble(),
+      planSeedCount: map['plan_seed_count'],
+      planDropStep: map['plan_drop_step']?.toDouble(),
+      planRebound: map['plan_rebound']?.toDouble(),
+      planCommission: map['plan_commission']?.toDouble(),
+      planWeightModeKey: map['plan_weight_mode'],
       cashIncome: (map['cash_income'] ?? 0.0).toDouble(),
       sellPrice: map['sell_price']?.toDouble(),
       sellQuantity: map['sell_quantity']?.toDouble(),
@@ -122,6 +173,7 @@ class HoldingBatch {
     return HoldingBatch(
       id: id ?? this.id,
       assetType: assetType,
+      market: market,
       stockCode: stockCode,
       stockName: stockName,
       buyPrice: buyPrice,
@@ -129,6 +181,15 @@ class HoldingBatch {
       commission: commission,
       buyDate: buyDate,
       note: note ?? this.note,
+      planRecoverPrice: planRecoverPrice,
+      planRecoverQuantity: planRecoverQuantity,
+      planCapital: planCapital,
+      planStartPrice: planStartPrice,
+      planSeedCount: planSeedCount,
+      planDropStep: planDropStep,
+      planRebound: planRebound,
+      planCommission: planCommission,
+      planWeightModeKey: planWeightModeKey,
       cashIncome: cashIncome ?? this.cashIncome,
       sellPrice: sellPrice ?? this.sellPrice,
       sellQuantity: sellQuantity ?? this.sellQuantity,
@@ -140,6 +201,7 @@ class HoldingBatch {
 /// 持仓汇总 - 对某只股票或基金所有批次的聚合视图
 class HoldingPosition {
   final String assetType;
+  final String market;
   final String stockCode;
   final String stockName;
   final List<HoldingBatch> batches;
@@ -147,6 +209,7 @@ class HoldingPosition {
 
   HoldingPosition({
     this.assetType = 'stock',
+    this.market = 'SH',
     required this.stockCode,
     required this.stockName,
     required this.batches,

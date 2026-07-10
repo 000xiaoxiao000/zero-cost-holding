@@ -18,7 +18,7 @@ class DatabaseHelper {
     final path = join(dbPath, 'stock_holding.db');
     return await openDatabase(
       path,
-      version: 4,
+      version: 8,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
       onOpen: _ensureSchema,
@@ -43,6 +43,7 @@ class DatabaseHelper {
       CREATE TABLE holding_batches (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         asset_type TEXT NOT NULL DEFAULT 'stock',
+        market TEXT NOT NULL DEFAULT 'SH',
         stock_code TEXT NOT NULL,
         stock_name TEXT NOT NULL,
         buy_price REAL NOT NULL,
@@ -50,6 +51,15 @@ class DatabaseHelper {
         commission REAL DEFAULT 0.0,
         buy_date TEXT NOT NULL,
         note TEXT,
+        plan_recover_price REAL,
+        plan_recover_quantity REAL,
+        plan_capital REAL,
+        plan_start_price REAL,
+        plan_seed_count INTEGER,
+        plan_drop_step REAL,
+        plan_rebound REAL,
+        plan_commission REAL,
+        plan_weight_mode TEXT,
         cash_income REAL DEFAULT 0.0,
         sell_price REAL,
         sell_quantity REAL,
@@ -83,6 +93,33 @@ class DatabaseHelper {
         definition: 'REAL DEFAULT 0.0',
       );
     }
+    if (oldVersion < 5) {
+      await _addColumnIfMissing(
+        db,
+        table: 'holding_batches',
+        column: 'market',
+        definition: "TEXT NOT NULL DEFAULT 'SH'",
+      );
+    }
+    if (oldVersion < 6) {
+      await _ensurePlanSnapshotColumns(db);
+    }
+    if (oldVersion < 7) {
+      await _addColumnIfMissing(
+        db,
+        table: 'holding_batches',
+        column: 'plan_recover_price',
+        definition: 'REAL',
+      );
+    }
+    if (oldVersion < 8) {
+      await _addColumnIfMissing(
+        db,
+        table: 'holding_batches',
+        column: 'plan_recover_quantity',
+        definition: 'REAL',
+      );
+    }
   }
 
   Future<void> _ensureSchema(Database db) async {
@@ -97,6 +134,70 @@ class DatabaseHelper {
       table: 'holding_batches',
       column: 'cash_income',
       definition: 'REAL DEFAULT 0.0',
+    );
+    await _addColumnIfMissing(
+      db,
+      table: 'holding_batches',
+      column: 'market',
+      definition: "TEXT NOT NULL DEFAULT 'SH'",
+    );
+    await _ensurePlanSnapshotColumns(db);
+    await _addColumnIfMissing(
+      db,
+      table: 'holding_batches',
+      column: 'plan_recover_price',
+      definition: 'REAL',
+    );
+    await _addColumnIfMissing(
+      db,
+      table: 'holding_batches',
+      column: 'plan_recover_quantity',
+      definition: 'REAL',
+    );
+  }
+
+  Future<void> _ensurePlanSnapshotColumns(Database db) async {
+    await _addColumnIfMissing(
+      db,
+      table: 'holding_batches',
+      column: 'plan_capital',
+      definition: 'REAL',
+    );
+    await _addColumnIfMissing(
+      db,
+      table: 'holding_batches',
+      column: 'plan_start_price',
+      definition: 'REAL',
+    );
+    await _addColumnIfMissing(
+      db,
+      table: 'holding_batches',
+      column: 'plan_seed_count',
+      definition: 'INTEGER',
+    );
+    await _addColumnIfMissing(
+      db,
+      table: 'holding_batches',
+      column: 'plan_drop_step',
+      definition: 'REAL',
+    );
+    await _addColumnIfMissing(
+      db,
+      table: 'holding_batches',
+      column: 'plan_rebound',
+      definition: 'REAL',
+    );
+    await _addColumnIfMissing(
+      db,
+      table: 'holding_batches',
+      column: 'plan_commission',
+      definition: 'REAL',
+    );
+    await _addColumnIfMissing(
+      db,
+      table: 'holding_batches',
+      column: 'plan_weight_mode',
+      definition: 'TEXT',
     );
   }
 
@@ -182,13 +283,14 @@ class DatabaseHelper {
 
   Future<int> deleteHoldingBatchesForAsset({
     required String assetType,
+    required String market,
     required String stockCode,
   }) async {
     final db = await database;
     return db.delete(
       'holding_batches',
-      where: 'asset_type = ? AND stock_code = ?',
-      whereArgs: [assetType, stockCode],
+      where: 'asset_type = ? AND market = ? AND stock_code = ?',
+      whereArgs: [assetType, market, stockCode],
     );
   }
 }

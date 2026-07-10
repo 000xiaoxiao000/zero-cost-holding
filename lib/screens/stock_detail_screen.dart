@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../navigation/app_navigation.dart';
 import '../theme/app_theme.dart';
 import '../utils/formatters.dart';
 import '../providers/stock_providers.dart';
@@ -60,6 +61,7 @@ class StockDetailScreen extends ConsumerWidget {
               }
             },
           ),
+          const HomeTabMenuButton(),
           const SizedBox(width: 4),
         ],
       ),
@@ -100,12 +102,12 @@ class StockDetailScreen extends ConsumerWidget {
             ),
             const SizedBox(height: 16),
             quoteAsync.when(
-              data: (stock) =>
-                  _DividendFinancingSection(code: code, market: market, stock: stock),
-              loading: () =>
-                  _DividendFinancingSection(code: code, market: market, stock: null),
-              error: (_, __) =>
-                  _DividendFinancingSection(code: code, market: market, stock: null),
+              data: (stock) => _DividendFinancingSection(
+                  code: code, market: market, stock: stock),
+              loading: () => _DividendFinancingSection(
+                  code: code, market: market, stock: null),
+              error: (_, __) => _DividendFinancingSection(
+                  code: code, market: market, stock: null),
             ),
             const SizedBox(height: 16),
             quoteAsync.when(
@@ -228,7 +230,8 @@ class _QuoteCard extends StatelessWidget {
                     label: '昨收', value: Formatters.price(stock.preClose))),
             Expanded(
                 child: _QuoteItem(
-                    label: '成交额', value: Formatters.largeNumber(stock.turnover))),
+                    label: '成交额',
+                    value: Formatters.largeNumber(stock.turnover))),
             Expanded(
                 child: _QuoteItem(
                     label: '换手率',
@@ -402,8 +405,8 @@ class _DividendFinancingSection extends ConsumerWidget {
       loading: () => const _SkeletonBox(height: 180),
       // 拉取失败也展示空态卡片，避免只剩空白间距
       error: (_, __) => _DividendFinancingCard(
-          data: const DividendFinancingData(
-              sourceNotes: ['分红/融资数据拉取失败，请下拉刷新重试']),
+          data:
+              const DividendFinancingData(sourceNotes: ['分红/融资数据拉取失败，请下拉刷新重试']),
           stock: stock),
       data: (data) => _DividendFinancingCard(data: data, stock: stock),
     );
@@ -530,17 +533,23 @@ class _DividendFinancingCardState extends State<_DividendFinancingCard> {
 
   String _potentialLabel(String level) {
     switch (level) {
-      case 'high': return '高';
-      case 'mid': return '中';
-      default: return '低';
+      case 'high':
+        return '高';
+      case 'mid':
+        return '中';
+      default:
+        return '低';
     }
   }
 
   Color _potentialColor(String level) {
     switch (level) {
-      case 'high': return AppTheme.primaryGreen;
-      case 'mid': return AppTheme.accentGold;
-      default: return AppTheme.textMuted;
+      case 'high':
+        return AppTheme.primaryGreen;
+      case 'mid':
+        return AppTheme.accentGold;
+      default:
+        return AppTheme.textMuted;
     }
   }
 
@@ -559,8 +568,7 @@ class _DividendFinancingCardState extends State<_DividendFinancingCard> {
                     : AppTheme.textPrimary)),
         if (_isFund) ...[
           Expanded(
-              child: _MetricTile(
-                  label: '分红次数', value: '${d.dividendCount}')),
+              child: _MetricTile(label: '分红次数', value: '${d.dividendCount}')),
           Expanded(
               child: _MetricTile(
                   label: '累计每份',
@@ -608,9 +616,7 @@ class _DividendFinancingCardState extends State<_DividendFinancingCard> {
                 fontSize: 13,
                 fontWeight: FontWeight.w700)),
         const SizedBox(height: 10),
-        _DividendTable(
-            records: d.records.take(6).toList(),
-            isFund: _isFund),
+        _DividendTable(records: d.records.take(6).toList(), isFund: _isFund),
       ] else ...[
         const SizedBox(height: 12),
         const _EmptyHint(text: '暂无分红送转记录'),
@@ -693,7 +699,10 @@ class _DividendFinancingCardState extends State<_DividendFinancingCard> {
           _DivFinSummaryBar(data: d),
           const SizedBox(height: 14),
           // 分红 / 融资 两个页签展示各自维度的指标与明细
-          if (_isFund || _showDividend) ..._buildDividendPanel() else ..._buildFinancingPanel(),
+          if (_isFund || _showDividend)
+            ..._buildDividendPanel()
+          else
+            ..._buildFinancingPanel(),
           const SizedBox(height: 14),
           Container(
             width: double.infinity,
@@ -781,8 +790,8 @@ class _DivFinToggle extends StatelessWidget {
                 ? color.withValues(alpha: 0.15)
                 : AppTheme.bgCardLight,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(
-            color: sel ? color : AppTheme.borderColor, width: 0.8),
+        border:
+            Border.all(color: sel ? color : AppTheme.borderColor, width: 0.8),
       ),
       child: Text(disabled ? '$label（无）' : label,
           style: TextStyle(
@@ -811,17 +820,20 @@ class _DivFinSummaryBar extends StatelessWidget {
     final divAmt = data.dividendTotal ?? 0;
     final finAmt = data.financingTotal ?? 0;
     final total = divAmt + finAmt;
-    final divFlex = total > 0 ? (divAmt / total * 100).round().clamp(1, 99) : 50;
+    final divFlex =
+        total > 0 ? (divAmt / total * 100).round().clamp(1, 99) : 50;
     final finFlex = 100 - divFlex;
     return Column(children: [
       Row(children: [
         Expanded(
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text('A股派现 ${data.dividendCount}次',
                 style: const TextStyle(
                     color: AppTheme.textSecondary, fontSize: 12)),
             const SizedBox(height: 2),
-            Text(data.dividendTotal != null
+            Text(
+                data.dividendTotal != null
                     ? Formatters.largeNumber(data.dividendTotal!)
                     : '--',
                 style: const TextStyle(
@@ -836,7 +848,8 @@ class _DivFinSummaryBar extends StatelessWidget {
                 style: const TextStyle(
                     color: AppTheme.textSecondary, fontSize: 12)),
             const SizedBox(height: 2),
-            Text(data.financingTotal != null
+            Text(
+                data.financingTotal != null
                     ? Formatters.largeNumber(data.financingTotal!)
                     : '--',
                 style: const TextStyle(
@@ -909,9 +922,7 @@ class _AdviceRow extends StatelessWidget {
           const SizedBox(width: 4),
           Text(tag,
               style: TextStyle(
-                  color: tagColor,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700)),
+                  color: tagColor, fontSize: 11, fontWeight: FontWeight.w700)),
         ]),
       ),
       const SizedBox(width: 8),
@@ -933,17 +944,14 @@ class _EmptyHint extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
       decoration: BoxDecoration(
-          color: AppTheme.bgCardLight,
-          borderRadius: BorderRadius.circular(8)),
+          color: AppTheme.bgCardLight, borderRadius: BorderRadius.circular(8)),
       child: Row(children: [
         const Icon(Icons.inbox_outlined, size: 14, color: AppTheme.textMuted),
         const SizedBox(width: 8),
         Expanded(
             child: Text(text,
                 style: const TextStyle(
-                    color: AppTheme.textSecondary,
-                    fontSize: 12,
-                    height: 1.4))),
+                    color: AppTheme.textSecondary, fontSize: 12, height: 1.4))),
       ]),
     );
   }
@@ -961,8 +969,7 @@ class _FinancingTable extends StatelessWidget {
         Expanded(flex: 3, child: _Th('类型')),
         Expanded(
             flex: 3,
-            child: Align(
-                alignment: Alignment.centerRight, child: _Th('募资净额'))),
+            child: Align(alignment: Alignment.centerRight, child: _Th('募资净额'))),
       ]),
       const SizedBox(height: 6),
       ...records.map((r) => Padding(
@@ -1083,8 +1090,7 @@ class _EntryAnalysisCard extends StatelessWidget {
   bool get _hasVolume => stock.volume > 0;
 
   // 市值适中（20亿~2000亿为书中偏好范围）
-  bool get _capOk =>
-      stock.marketCap > 2e9 && stock.marketCap < 2e11;
+  bool get _capOk => stock.marketCap > 2e9 && stock.marketCap < 2e11;
 
   @override
   Widget build(BuildContext context) {
@@ -1159,7 +1165,8 @@ class _EntryAnalysisCard extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           _SignalRow(
-            label: 'PB估值${stock.pb > 0 && stock.pb < 1 ? "破净" : stock.pb > 0 && stock.pb < 2 ? "合理(<2)" : stock.pb > 0 ? "偏高(≥2)" : "暂无"}',
+            label:
+                'PB估值${stock.pb > 0 && stock.pb < 1 ? "破净" : stock.pb > 0 && stock.pb < 2 ? "合理(<2)" : stock.pb > 0 ? "偏高(≥2)" : "暂无"}',
             met: pbScore >= 2,
             partial: pbScore == 1,
             detail: stock.pb > 0 ? 'PB ${stock.pb.toStringAsFixed(2)}' : '--',
@@ -1193,8 +1200,7 @@ class _EntryAnalysisCard extends StatelessWidget {
                 borderRadius: BorderRadius.circular(8),
                 border: Border.all(color: recColor.withValues(alpha: 0.25))),
             child: Text(recommendation,
-                style: TextStyle(
-                    color: recColor, fontSize: 12, height: 1.5)),
+                style: TextStyle(color: recColor, fontSize: 12, height: 1.5)),
           ),
         ],
       ),
@@ -1335,8 +1341,8 @@ class _FlowActionBar extends StatelessWidget {
                 onTap: () => Navigator.push(
                   context,
                   MaterialPageRoute(
-                    builder: (_) => HarvestCalculatorScreen(
-                        stockContext: _buildContext()),
+                    builder: (_) =>
+                        HarvestCalculatorScreen(stockContext: _buildContext()),
                   ),
                 ),
               ),
@@ -1345,8 +1351,8 @@ class _FlowActionBar extends StatelessWidget {
           const SizedBox(height: 10),
           const Text(
             '排雷通过后制定播种计划，持仓回本后用收割计算确认零成本仓位',
-            style: TextStyle(
-                color: AppTheme.textMuted, fontSize: 11, height: 1.4),
+            style:
+                TextStyle(color: AppTheme.textMuted, fontSize: 11, height: 1.4),
           ),
         ],
       ),
@@ -1386,13 +1392,10 @@ class _FlowButton extends StatelessWidget {
             const SizedBox(height: 5),
             Text(label,
                 style: TextStyle(
-                    color: color,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700)),
+                    color: color, fontSize: 13, fontWeight: FontWeight.w700)),
             const SizedBox(height: 2),
             Text(subtitle,
-                style: const TextStyle(
-                    color: AppTheme.textMuted, fontSize: 10),
+                style: const TextStyle(color: AppTheme.textMuted, fontSize: 10),
                 textAlign: TextAlign.center),
           ],
         ),

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/services.dart';
@@ -7,6 +9,7 @@ import '../utils/formatters.dart';
 import '../providers/holding_providers.dart';
 import '../models/holding_batch.dart';
 import '../models/stock_context.dart';
+import '../services/stock_api_service.dart';
 import 'add_holding_batch_screen.dart';
 import 'harvest_calculator_screen.dart';
 import 'seed_plan_screen.dart';
@@ -26,6 +29,7 @@ class _HoldingTrackerScreenState extends ConsumerState<HoldingTrackerScreen> {
   String _assetFilter = 'all';
   String _statusFilter = 'all';
   String _sortMode = 'progress';
+  bool _actionBusy = false;
 
   @override
   void initState() {
@@ -69,6 +73,16 @@ class _HoldingTrackerScreenState extends ConsumerState<HoldingTrackerScreen> {
     return filtered;
   }
 
+  Future<void> _runOnce(FutureOr<void> Function() action) async {
+    if (_actionBusy) return;
+    setState(() => _actionBusy = true);
+    try {
+      await Future.sync(action);
+    } finally {
+      if (mounted) setState(() => _actionBusy = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     ref.watch(holdingPositionsProvider);
@@ -83,29 +97,42 @@ class _HoldingTrackerScreenState extends ConsumerState<HoldingTrackerScreen> {
           IconButton(
             tooltip: '截图文字导入',
             icon: const Icon(Icons.document_scanner_outlined),
-            onPressed: () => _showImportSheet(context, ref),
+            onPressed: _actionBusy
+                ? null
+                : () => _runOnce(() => _showImportSheet(context, ref)),
           ),
           IconButton(
             tooltip: '生成账单',
             icon: const Icon(Icons.description_outlined),
-            onPressed: holdings.isEmpty
+            onPressed: holdings.isEmpty || _actionBusy
                 ? null
-                : () => _showStatement(context, holdings),
+                : () => _runOnce(() => _showStatement(context, holdings)),
           ),
           IconButton(
             tooltip: '零成本资产库',
             icon: const Icon(Icons.emoji_events_outlined),
-            onPressed: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const ZeroCostVaultScreen()),
-            ),
+            onPressed: _actionBusy
+                ? null
+                : () => _runOnce(
+                      () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                            builder: (_) => const ZeroCostVaultScreen()),
+                      ),
+                    ),
           ),
           IconButton(
             icon: const Icon(Icons.add),
-            onPressed: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const AddHoldingBatchScreen()),
-            ).then((_) => ref.read(holdingPositionsProvider.notifier).load()),
+            onPressed: _actionBusy
+                ? null
+                : () => _runOnce(
+                      () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                            builder: (_) => const AddHoldingBatchScreen()),
+                      ).then((_) =>
+                          ref.read(holdingPositionsProvider.notifier).load()),
+                    ),
           ),
           const SizedBox(width: 4),
         ],
@@ -122,7 +149,6 @@ class _HoldingTrackerScreenState extends ConsumerState<HoldingTrackerScreen> {
                   assetFilter: _assetFilter,
                   statusFilter: _statusFilter,
                   sortMode: _sortMode,
-                  strategyCount: holdings.length,
                   onChanged: () => setState(() {}),
                   onAssetFilterChanged: (value) =>
                       setState(() => _assetFilter = value),
@@ -176,7 +202,9 @@ class _HoldingTrackerScreenState extends ConsumerState<HoldingTrackerScreen> {
             onPressed: () async {
               await Clipboard.setData(ClipboardData(text: text));
               if (!ctx.mounted) return;
-              ScaffoldMessenger.of(context).showSnackBar(
+              final messenger = ScaffoldMessenger.of(context);
+              messenger.clearSnackBars();
+              messenger.showSnackBar(
                 const SnackBar(content: Text('账单已复制')),
               );
               Navigator.pop(ctx);
@@ -194,6 +222,15 @@ class _HoldingTrackerScreenState extends ConsumerState<HoldingTrackerScreen> {
     final totalRecovered =
         holdings.fold(0.0, (sum, h) => sum + h.totalRecovered);
     final totalFree = holdings.fold(0.0, (sum, h) => sum + h.freeQuantity);
+    final freeUnits = holdings
+        .where((h) => h.freeQuantity > 0)
+        .map((h) => h.quantityUnit)
+        .toSet();
+    final freeUnit = freeUnits.length == 1
+        ? freeUnits.first
+        : freeUnits.isEmpty
+            ? ''
+            : '股/份';
     final progress = totalInvested > 0 ? totalRecovered / totalInvested : 0.0;
     final buffer = StringBuffer()
       ..writeln('零成本播种账单')
@@ -201,16 +238,16 @@ class _HoldingTrackerScreenState extends ConsumerState<HoldingTrackerScreen> {
       ..writeln('标的数量：${holdings.length}')
       ..writeln(
           '本金收回进度：${(progress.clamp(0.0, 1.0) * 100).toStringAsFixed(1)}%')
-      ..writeln('累计播种本金：${Formatters.largeNumber(totalInvested)}')
-      ..writeln('已收回现金：${Formatters.largeNumber(totalRecovered)}')
-      ..writeln('免费持有数量：${Formatters.quantity(totalFree)}')
+      ..writeln('累计播种本金：${Formatters.money(totalInvested)}')
+      ..writeln('已收回现金：${Formatters.money(totalRecovered)}')
+      ..writeln('免费持有数量：${Formatters.quantity(totalFree)}$freeUnit')
       ..writeln('');
     for (final h in holdings) {
       buffer
         ..writeln('${h.stockName} ${h.stockCode}（${h.assetTypeLabel}）')
         ..writeln('  本金收回进度：${(h.zeroCostProgress * 100).toStringAsFixed(1)}%')
-        ..writeln('  播种本金：${Formatters.largeNumber(h.totalInvested)}')
-        ..writeln('  已收回：${Formatters.largeNumber(h.totalRecovered)}')
+        ..writeln('  播种本金：${Formatters.money(h.totalInvested)}')
+        ..writeln('  已收回：${Formatters.money(h.totalRecovered)}')
         ..writeln(
             '  剩余数量：${Formatters.quantity(h.totalRemaining)}${h.quantityUnit}')
         ..writeln('  最新成本价：${Formatters.price(h.latestZeroCostPrice)}')
@@ -242,6 +279,15 @@ class _SummaryCard extends ConsumerWidget {
     final totalRecovered = notifier.totalRecovered;
     final freeQuantity =
         notifier.holdings.fold(0.0, (sum, h) => sum + h.freeQuantity);
+    final freeUnits = notifier.holdings
+        .where((h) => h.freeQuantity > 0)
+        .map((h) => h.quantityUnit)
+        .toSet();
+    final freeUnit = freeUnits.length == 1
+        ? freeUnits.first
+        : freeUnits.isEmpty
+            ? ''
+            : '股/份';
     final remainingGap =
         totalInvested > totalRecovered ? totalInvested - totalRecovered : 0.0;
     final overallProgress = totalInvested > 0
@@ -287,7 +333,7 @@ class _SummaryCard extends ConsumerWidget {
               Expanded(
                   child: _StatCol(
                       label: '免费赚到数量',
-                      value: Formatters.quantity(freeQuantity),
+                      value: '${Formatters.quantity(freeQuantity)}$freeUnit',
                       color: AppTheme.primaryGreen)),
             ],
           ),
@@ -297,21 +343,21 @@ class _SummaryCard extends ConsumerWidget {
               Expanded(
                 child: _StatCol(
                   label: '累计播种本金',
-                  value: Formatters.largeNumber(totalInvested),
+                  value: Formatters.money(totalInvested),
                   color: AppTheme.textSecondary,
                 ),
               ),
               Expanded(
                 child: _StatCol(
                   label: '已收回现金',
-                  value: Formatters.largeNumber(totalRecovered),
+                  value: Formatters.money(totalRecovered),
                   color: AppTheme.textSecondary,
                 ),
               ),
               Expanded(
                 child: _StatCol(
                   label: '待回收缺口',
-                  value: Formatters.largeNumber(remainingGap),
+                  value: Formatters.money(remainingGap),
                   color: AppTheme.textSecondary,
                 ),
               ),
@@ -342,7 +388,7 @@ class _SummaryCard extends ConsumerWidget {
           Text(
             overallProgress >= 1.0
                 ? '已达成零成本资产口径，剩余数量进入免费持有统计'
-                : '还需回收 ${Formatters.largeNumber(remainingGap)} 即可实现零成本',
+                : '还需回收 ${Formatters.money(remainingGap)} 即可实现零成本',
             style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12),
           ),
         ],
@@ -379,7 +425,6 @@ class _BookkeepingTools extends StatelessWidget {
   final String assetFilter;
   final String statusFilter;
   final String sortMode;
-  final int strategyCount;
   final VoidCallback onChanged;
   final ValueChanged<String> onAssetFilterChanged;
   final ValueChanged<String> onStatusFilterChanged;
@@ -390,7 +435,6 @@ class _BookkeepingTools extends StatelessWidget {
     required this.assetFilter,
     required this.statusFilter,
     required this.sortMode,
-    required this.strategyCount,
     required this.onChanged,
     required this.onAssetFilterChanged,
     required this.onStatusFilterChanged,
@@ -399,7 +443,6 @@ class _BookkeepingTools extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final inBasicQuota = strategyCount <= 5;
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
@@ -464,18 +507,13 @@ class _BookkeepingTools extends StatelessWidget {
             width: double.infinity,
             padding: const EdgeInsets.all(10),
             decoration: BoxDecoration(
-              color:
-                  (inBasicQuota ? AppTheme.primaryGreen : AppTheme.accentGold)
-                      .withValues(alpha: 0.10),
+              color: AppTheme.primaryGreen.withValues(alpha: 0.10),
               borderRadius: BorderRadius.circular(8),
             ),
-            child: Text(
-              inBasicQuota
-                  ? '基础策略池：$strategyCount / 5。账本不限数量，前5只默认纳入播种策略计算。'
-                  : '账本已超过5只。全部记录仍可管理；高级量化策略可按筛选/排序选择重点标的。当前为本地策略建议提示，不触达执行。',
+            child: const Text(
+              '账本不限标的数量，当前筛选/排序下的全部记录都可参与本地播种策略参考。',
               style: TextStyle(
-                color:
-                    inBasicQuota ? AppTheme.primaryGreen : AppTheme.accentGold,
+                color: AppTheme.primaryGreen,
                 fontSize: 12,
                 height: 1.35,
               ),
@@ -576,10 +614,10 @@ class _HoldingCard extends ConsumerWidget {
                     children: [
                       Row(
                         children: [
-                          Flexible(
+                          Expanded(
                             child: Text(position.stockName,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
+                                maxLines: 3,
+                                overflow: TextOverflow.visible,
                                 style: const TextStyle(
                                     color: AppTheme.textPrimary,
                                     fontSize: 16,
@@ -611,33 +649,10 @@ class _HoldingCard extends ConsumerWidget {
                     ],
                   ),
                 ),
-                const SizedBox(width: 8),
-                Flexible(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Text(
-                          '剩余 ${Formatters.quantity(position.totalRemaining)} ${position.quantityUnit}',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          textAlign: TextAlign.end,
-                          style: const TextStyle(
-                              color: AppTheme.textSecondary, fontSize: 12)),
-                      const SizedBox(height: 3),
-                      Text(
-                          '最新成本价 ¥${Formatters.price(position.latestZeroCostPrice)}',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          textAlign: TextAlign.end,
-                          style: const TextStyle(
-                              color: AppTheme.textSecondary, fontSize: 13)),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 4),
+                const SizedBox(width: 12),
                 PopupMenuButton<String>(
                   icon: const Icon(Icons.more_vert, color: AppTheme.textMuted),
-                  padding: EdgeInsets.zero,
+                  padding: const EdgeInsets.only(left: 12),
                   constraints:
                       const BoxConstraints(minWidth: 32, minHeight: 32),
                   splashRadius: 20,
@@ -662,11 +677,16 @@ class _HoldingCard extends ConsumerWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                Text(
+                    '剩余 ${Formatters.quantity(position.totalRemaining)} ${position.quantityUnit} · 最新成本价 ¥${Formatters.price(position.latestZeroCostPrice)}',
+                    style: const TextStyle(
+                        color: AppTheme.textSecondary, fontSize: 12)),
+                const SizedBox(height: 8),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Text(
-                      '本金收回 ${Formatters.largeNumber(position.totalRecovered)} / 播种本金 ${Formatters.largeNumber(position.totalInvested)}',
+                      '本金收回 ${Formatters.money(position.totalRecovered)} / 播种本金 ${Formatters.money(position.totalInvested)}',
                       style: const TextStyle(
                           color: AppTheme.textMuted, fontSize: 11),
                     ),
@@ -692,7 +712,12 @@ class _HoldingCard extends ConsumerWidget {
           const Divider(height: 20, indent: 16, endIndent: 16),
           _FlowActionRow(position: position),
           const Divider(height: 20, indent: 16, endIndent: 16),
-          ...position.batches.map((b) => _BatchRow(batch: b)),
+          ...position.batches.map(
+            (b) => _BatchRow(
+              batch: b,
+              isLastBatch: position.batches.length == 1,
+            ),
+          ),
           const SizedBox(height: 8),
         ],
       ),
@@ -729,6 +754,7 @@ class _HoldingCard extends ConsumerWidget {
     if (confirmed != true || !context.mounted) return;
     await ref.read(holdingPositionsProvider.notifier).deletePosition(
           assetType: position.assetType,
+          market: position.market,
           stockCode: position.stockCode,
         );
   }
@@ -738,20 +764,45 @@ class _FlowActionRow extends StatelessWidget {
   final HoldingPosition position;
   const _FlowActionRow({required this.position});
 
-  StockContext _buildContext() => StockContext(
-        code: position.stockCode,
-        name: position.stockName,
-        assetType: position.assetType,
-        currentPrice: position.avgHoldingCost > 0 ? position.avgHoldingCost : null,
-        remainingCost: position.effectiveRemainingCost,
-        remainingQty: position.totalRemaining,
-        avgCostPrice: position.avgHoldingCost,
-      );
+  HoldingBatch? _latestPlanBatch() {
+    for (final batch in position.batches) {
+      if (batch.hasPlanSnapshot) return batch;
+    }
+    return null;
+  }
+
+  StockContext _buildContext() {
+    final planBatch = _latestPlanBatch();
+    return StockContext(
+      code: position.stockCode,
+      name: position.stockName,
+      market: position.market,
+      assetType: position.assetType,
+      currentPrice: planBatch?.planStartPrice ??
+          (position.avgHoldingCost > 0 ? position.avgHoldingCost : null),
+      remainingCost: position.effectiveRemainingCost,
+      remainingQty: position.totalRemaining,
+      avgCostPrice: position.avgHoldingCost,
+      planRecoverPrice: planBatch?.planRecoverPrice,
+      planRecoverQuantity: planBatch?.planRecoverQuantity,
+      planCapital: planBatch?.planCapital,
+      planStartPrice: planBatch?.planStartPrice,
+      planSeedCount: planBatch?.planSeedCount,
+      planDropStep: planBatch?.planDropStep,
+      planRebound: planBatch?.planRebound,
+      planCommission: planBatch?.planCommission,
+      planWeightModeKey: planBatch?.planWeightModeKey,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     final ctx = _buildContext();
-    final canHarvest = position.totalRemaining > 0 && position.effectiveRemainingCost > 0;
+    final canHarvest =
+        position.totalRemaining > 0 && position.effectiveRemainingCost > 0;
+    final harvestDisabledReason = position.totalRemaining <= 0
+        ? '已无剩余${position.quantityUnit}数，不能再计算卖出收割；如本金未回满，请记录现金派发或修正回收记录。'
+        : '本金已回收完成，无需再计算收割。';
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       child: Row(
@@ -762,6 +813,7 @@ class _FlowActionRow extends StatelessWidget {
               label: '计算收割',
               color: AppTheme.accentGold,
               enabled: canHarvest,
+              disabledReason: canHarvest ? null : harvestDisabledReason,
               onTap: () => Navigator.push(
                 context,
                 MaterialPageRoute(
@@ -806,47 +858,77 @@ class _FlowActionRow extends StatelessWidget {
   }
 }
 
-class _FlowButton extends StatelessWidget {
+class _FlowButton extends StatefulWidget {
   final IconData icon;
   final String label;
   final Color color;
   final bool enabled;
-  final VoidCallback onTap;
+  final String? disabledReason;
+  final FutureOr<void> Function() onTap;
 
   const _FlowButton({
     required this.icon,
     required this.label,
     required this.color,
     required this.enabled,
+    this.disabledReason,
     required this.onTap,
   });
 
   @override
+  State<_FlowButton> createState() => _FlowButtonState();
+}
+
+class _FlowButtonState extends State<_FlowButton> {
+  bool _busy = false;
+
+  Future<void> _handleTap() async {
+    if (_busy) return;
+    if (!widget.enabled) {
+      final message = widget.disabledReason;
+      if (message == null || message.isEmpty) return;
+      final messenger = ScaffoldMessenger.of(context);
+      messenger.clearSnackBars();
+      messenger.showSnackBar(SnackBar(content: Text(message)));
+      return;
+    }
+
+    setState(() => _busy = true);
+    try {
+      await Future.sync(widget.onTap);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTap: enabled ? onTap : null,
+      onTap: _handleTap,
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 9),
         decoration: BoxDecoration(
-          color: enabled
-              ? color.withValues(alpha: 0.10)
+          color: widget.enabled
+              ? widget.color.withValues(alpha: 0.10)
               : AppTheme.bgCardLight,
           borderRadius: BorderRadius.circular(8),
           border: Border.all(
-            color: enabled ? color.withValues(alpha: 0.4) : AppTheme.borderColor,
+            color: widget.enabled
+                ? widget.color.withValues(alpha: 0.4)
+                : AppTheme.borderColor,
           ),
         ),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(icon,
+            Icon(widget.icon,
                 size: 14,
-                color: enabled ? color : AppTheme.textMuted),
+                color: widget.enabled ? widget.color : AppTheme.textMuted),
             const SizedBox(width: 5),
             Text(
-              label,
+              widget.label,
               style: TextStyle(
-                color: enabled ? color : AppTheme.textMuted,
+                color: widget.enabled ? widget.color : AppTheme.textMuted,
                 fontSize: 12,
                 fontWeight: FontWeight.w600,
               ),
@@ -858,12 +940,69 @@ class _FlowButton extends StatelessWidget {
   }
 }
 
+class _IdempotentIconButton extends StatefulWidget {
+  final String tooltip;
+  final IconData icon;
+  final Color color;
+  final bool enabled;
+  final FutureOr<void> Function() onPressed;
+
+  const _IdempotentIconButton({
+    required this.tooltip,
+    required this.icon,
+    required this.color,
+    required this.enabled,
+    required this.onPressed,
+  });
+
+  @override
+  State<_IdempotentIconButton> createState() => _IdempotentIconButtonState();
+}
+
+class _IdempotentIconButtonState extends State<_IdempotentIconButton> {
+  bool _busy = false;
+
+  Future<void> _handlePressed() async {
+    if (_busy || !widget.enabled) return;
+    setState(() => _busy = true);
+    try {
+      await Future.sync(widget.onPressed);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      visualDensity: VisualDensity.compact,
+      iconSize: 18,
+      tooltip: widget.tooltip,
+      onPressed: widget.enabled && !_busy ? _handlePressed : null,
+      icon: Icon(widget.icon),
+      color: widget.color,
+    );
+  }
+}
+
 class _BatchRow extends ConsumerWidget {
   final HoldingBatch batch;
-  const _BatchRow({required this.batch});
+  final bool isLastBatch;
+
+  const _BatchRow({
+    required this.batch,
+    required this.isLastBatch,
+  });
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final canRecordRecover = batch.id != null &&
+        (!batch.isFullySold || (batch.isFullySold && !batch.isZeroCost));
+    final recoverTooltip = batch.isFullySold && !batch.isZeroCost
+        ? '修正回收'
+        : batch.isFullySold
+            ? '已全部回收'
+            : '记录回收';
     final dotColor = batch.isZeroCost
         ? AppTheme.accentGold
         : batch.isFullySold
@@ -884,55 +1023,56 @@ class _BatchRow extends ConsumerWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  '${Formatters.date(batch.buyDate)} 播种 ${Formatters.quantity(batch.quantity)}${batch.quantityUnit} @ ¥${Formatters.price(batch.buyPrice)}',
+                  '${Formatters.dateTimeFull(batch.buyDate)} 播种 ${Formatters.quantity(batch.quantity)}${batch.quantityUnit}，价格 ¥${Formatters.price(batch.buyPrice)}',
                   style: const TextStyle(
                       color: AppTheme.textSecondary, fontSize: 12),
                 ),
                 if (batch.sellPrice != null)
                   Text(
-                    '已回收 ${Formatters.quantity(batch.sellQuantity ?? 0)}${batch.quantityUnit} @ ¥${Formatters.price(batch.sellPrice!)}，现金 ¥${Formatters.largeNumber(batch.recoveredAmount)}',
+                    '${batch.sellDate != null ? '${Formatters.dateTimeFull(batch.sellDate!)} ' : ''}已回收 ${Formatters.quantity(batch.sellQuantity ?? 0)}${batch.quantityUnit}，价格 ¥${Formatters.price(batch.sellPrice!)}，现金 ¥${Formatters.money(batch.recoveredAmount)}',
                     style: const TextStyle(
                         color: AppTheme.primaryGreen, fontSize: 11),
                   ),
                 if (batch.cashIncome > 0)
                   Text(
-                    '现金分红/派发 ¥${Formatters.largeNumber(batch.cashIncome)}',
+                    '现金分红/派发 ¥${Formatters.money(batch.cashIncome)}',
                     style: const TextStyle(
                         color: AppTheme.accentGold, fontSize: 11),
+                  ),
+                Text(
+                  '剩余 ${Formatters.quantity(batch.remainingQuantity)}${batch.quantityUnit}，剩余成本 ¥${Formatters.money(batch.effectiveRemainingCost)}',
+                  style:
+                      const TextStyle(color: AppTheme.textMuted, fontSize: 11),
+                ),
+                if (batch.remainingQuantity <= 0 && !batch.isZeroCost)
+                  const Text(
+                    '已无剩余数量但本金未回满，可点修正回收或记录现金派发。',
+                    style: TextStyle(color: AppTheme.accentGold, fontSize: 11),
                   ),
               ],
             ),
           ),
           _BatchProgressBadge(progress: batch.zeroCostProgress),
           const SizedBox(width: 4),
-          IconButton(
-            visualDensity: VisualDensity.compact,
-            iconSize: 18,
-            tooltip: '记录回收',
-            onPressed: batch.id == null || batch.isFullySold
-                ? null
-                : () => _showRecoverDialog(context, ref, batch),
-            icon: const Icon(Icons.receipt_long_outlined),
+          _IdempotentIconButton(
+            tooltip: recoverTooltip,
+            enabled: canRecordRecover,
+            onPressed: () => _showRecoverDialog(context, ref, batch),
+            icon: Icons.receipt_long_outlined,
             color: AppTheme.accentGold,
           ),
-          IconButton(
-            visualDensity: VisualDensity.compact,
-            iconSize: 18,
+          _IdempotentIconButton(
             tooltip: '记录现金派发',
-            onPressed: batch.id == null
-                ? null
-                : () => _showCashIncomeDialog(context, ref, batch),
-            icon: const Icon(Icons.water_drop_outlined),
+            enabled: batch.id != null,
+            onPressed: () => _showCashIncomeDialog(context, ref, batch),
+            icon: Icons.water_drop_outlined,
             color: AppTheme.primaryGreen,
           ),
-          IconButton(
-            visualDensity: VisualDensity.compact,
-            iconSize: 18,
+          _IdempotentIconButton(
             tooltip: '删除记录',
-            onPressed: batch.id == null
-                ? null
-                : () => _confirmDeleteBatch(context, ref, batch),
-            icon: const Icon(Icons.delete_outline),
+            enabled: batch.id != null,
+            onPressed: () => _confirmDeleteBatch(context, ref, batch),
+            icon: Icons.delete_outline,
             color: AppTheme.riskRed,
           ),
         ],
@@ -949,9 +1089,11 @@ class _BatchRow extends ConsumerWidget {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: AppTheme.bgCard,
-        title: const Text('删除播种记录'),
+        title: Text(isLastBatch ? '删除最后一条记录' : '删除播种记录'),
         content: Text(
-          '将删除 ${batch.stockName} ${Formatters.date(batch.buyDate)} 的这条记录，并重新计算本金收回进度。此操作无法恢复。',
+          isLastBatch
+              ? '这是 ${batch.stockName} 的最后一条播种记录。删除后，该标的的整个播种账本也会消失，并从持仓列表中移除。此操作无法恢复。'
+              : '将删除 ${batch.stockName} ${Formatters.date(batch.buyDate)} 的这条记录，并重新计算本金收回进度。此操作无法恢复。',
           style: const TextStyle(color: AppTheme.textSecondary, height: 1.4),
         ),
         actions: [
@@ -962,7 +1104,7 @@ class _BatchRow extends ConsumerWidget {
           ElevatedButton(
             onPressed: () => Navigator.pop(ctx, true),
             style: ElevatedButton.styleFrom(backgroundColor: AppTheme.riskRed),
-            child: const Text('确认删除'),
+            child: Text(isLastBatch ? '确认删除账本' : '确认删除'),
           ),
         ],
       ),
@@ -998,7 +1140,8 @@ class _BatchRow extends ConsumerWidget {
     WidgetRef ref,
     HoldingBatch batch,
   ) async {
-    final recovered = await showDialog<({double price, double quantity})>(
+    final recovered = await showDialog<
+        ({double price, double quantity, bool replace, DateTime sellDate})>(
       context: context,
       builder: (_) => _RecoverDialog(batch: batch),
     );
@@ -1011,7 +1154,8 @@ class _BatchRow extends ConsumerWidget {
     if (!context.mounted) return;
 
     await ref.read(holdingPositionsProvider.notifier).recordSell(
-        batch.id!, batch.stockCode, recovered.price, recovered.quantity);
+        batch.id!, recovered.price, recovered.quantity,
+        replace: recovered.replace, sellDate: recovered.sellDate);
   }
 }
 
@@ -1109,17 +1253,120 @@ class _RecoverDialog extends StatefulWidget {
 class _RecoverDialogState extends State<_RecoverDialog> {
   late final TextEditingController _priceController;
   late final TextEditingController _qtyController;
+  late final TextEditingController _amountController;
+  late DateTime _sellDate;
   String? _priceError;
   String? _quantityError;
+  bool _syncing = false;
+
+  bool get _isCorrection =>
+      widget.batch.isFullySold && !widget.batch.isZeroCost;
+
+  double get _maxQuantity =>
+      _isCorrection ? widget.batch.quantity : widget.batch.remainingQuantity;
+
+  double get _plannedRecoverPrice {
+    final price = widget.batch.planRecoverPrice;
+    if (price != null && price > 0) return price;
+    final rebound = widget.batch.planRebound;
+    if (rebound != null && rebound > 0) {
+      return widget.batch.buyPrice * (1 + rebound / 100);
+    }
+    return widget.batch.buyPrice;
+  }
+
+  double get _plannedRecoverQuantity {
+    final quantity = widget.batch.planRecoverQuantity;
+    if (quantity != null && quantity > 0) return quantity;
+    final rawQuantity = widget.batch.totalCost / _plannedRecoverPrice;
+    return (rawQuantity / 100).ceil() * 100;
+  }
+
+  double get _plannedFreeQuantity {
+    final freeQuantity = widget.batch.quantity - _plannedRecoverQuantity;
+    return freeQuantity > 0 ? freeQuantity : 0;
+  }
+
+  double get _initialRecoverQuantity {
+    if (_isCorrection) {
+      return widget.batch.sellQuantity ?? widget.batch.quantity;
+    }
+    final planned = _plannedRecoverQuantity;
+    if (planned <= 0) return widget.batch.remainingQuantity;
+    return planned > widget.batch.remainingQuantity
+        ? widget.batch.remainingQuantity
+        : planned;
+  }
 
   @override
   void initState() {
     super.initState();
     final batch = widget.batch;
-    _priceController =
-        TextEditingController(text: batch.sellPrice?.toStringAsFixed(3) ?? '');
+    final initialPrice = batch.sellPrice ?? _plannedRecoverPrice;
+    _priceController = TextEditingController(
+      text: initialPrice.toStringAsFixed(3),
+    );
     _qtyController = TextEditingController(
-      text: (batch.sellQuantity ?? batch.remainingQuantity).toString(),
+      text: _initialRecoverQuantity.toStringAsFixed(0),
+    );
+    _amountController = TextEditingController();
+    _sellDate = batch.sellDate ?? DateTime.now();
+    _syncAmountFromPriceQty();
+  }
+
+  Future<void> _pickSellDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _sellDate,
+      firstDate: DateTime(2000),
+      lastDate: DateTime.now(),
+      locale: const Locale('zh', 'CN'),
+      helpText: '选择回收日期',
+      cancelText: '取消',
+      confirmText: '确定',
+      builder: (ctx, child) => Theme(
+        data: Theme.of(ctx).copyWith(
+          colorScheme: const ColorScheme.dark(
+            primary: AppTheme.accent,
+            surface: AppTheme.bgCard,
+          ),
+        ),
+        child: child!,
+      ),
+    );
+    if (picked == null || !mounted) return;
+
+    final pickedTime = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(_sellDate),
+      helpText: '选择回收时间',
+      cancelText: '取消',
+      confirmText: '确定',
+      hourLabelText: '时',
+      minuteLabelText: '分',
+      builder: (ctx, child) => Theme(
+        data: Theme.of(ctx).copyWith(
+          colorScheme: const ColorScheme.dark(
+            primary: AppTheme.accent,
+            surface: AppTheme.bgCard,
+          ),
+        ),
+        child: MediaQuery(
+          data: MediaQuery.of(ctx).copyWith(alwaysUse24HourFormat: true),
+          child: child!,
+        ),
+      ),
+    );
+    if (pickedTime == null) return;
+
+    setState(
+      () => _sellDate = DateTime(
+        picked.year,
+        picked.month,
+        picked.day,
+        pickedTime.hour,
+        pickedTime.minute,
+      ),
     );
   }
 
@@ -1127,7 +1374,35 @@ class _RecoverDialogState extends State<_RecoverDialog> {
   void dispose() {
     _priceController.dispose();
     _qtyController.dispose();
+    _amountController.dispose();
     super.dispose();
+  }
+
+  void _syncAmountFromPriceQty() {
+    if (_syncing) return;
+    final price = double.tryParse(_priceController.text);
+    final quantity = double.tryParse(_qtyController.text);
+    if (price == null || quantity == null || price <= 0 || quantity <= 0) {
+      return;
+    }
+    _syncing = true;
+    _amountController.text = (price * quantity).toStringAsFixed(2);
+    _syncing = false;
+  }
+
+  void _syncQtyFromAmount() {
+    if (_syncing) return;
+    final price = double.tryParse(_priceController.text);
+    final amount = double.tryParse(_amountController.text);
+    if (price == null || amount == null || price <= 0 || amount <= 0) {
+      return;
+    }
+    final rawQuantity = amount / price;
+    final quantity = (rawQuantity / 100).floor() * 100;
+    if (quantity <= 0) return;
+    _syncing = true;
+    _qtyController.text = quantity.toStringAsFixed(0);
+    _syncing = false;
   }
 
   void _submit() {
@@ -1142,8 +1417,10 @@ class _RecoverDialogState extends State<_RecoverDialog> {
     }
     if (quantity == null || quantity <= 0) {
       nextQuantityError = batch.isFund ? '请输入有效份额' : '请输入有效股数';
-    } else if (quantity > batch.quantity) {
-      nextQuantityError = '不能超过本批播种${batch.quantityUnit}数';
+    } else if (quantity > _maxQuantity) {
+      nextQuantityError = _isCorrection
+          ? '不能超过本批播种${batch.quantityUnit}数'
+          : '不能超过当前剩余${batch.quantityUnit}数';
     }
 
     if (nextPriceError != null || nextQuantityError != null) {
@@ -1158,6 +1435,8 @@ class _RecoverDialogState extends State<_RecoverDialog> {
     Navigator.pop(context, (
       price: price!,
       quantity: quantity!,
+      replace: _isCorrection,
+      sellDate: _sellDate,
     ));
   }
 
@@ -1166,48 +1445,95 @@ class _RecoverDialogState extends State<_RecoverDialog> {
     final batch = widget.batch;
     return AlertDialog(
       backgroundColor: AppTheme.bgCard,
-      title: const Text('记录回收'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            '${batch.assetTypeLabel} · ${batch.stockName} ${batch.stockCode}',
-            style: const TextStyle(color: AppTheme.textSecondary, fontSize: 13),
-          ),
-          const SizedBox(height: 14),
-          TextField(
-            controller: _priceController,
-            keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            inputFormatters: [
-              if (batch.isFund)
-                FilteringTextInputFormatter.allow(RegExp(r'^\d+\.?\d{0,4}'))
-              else
-                FilteringTextInputFormatter.allow(RegExp(r'^\d+\.?\d{0,3}')),
-            ],
-            decoration: InputDecoration(
-              labelText: batch.isFund ? '回收确认净值' : '回收参考价格',
-              errorText: _priceError,
+      title: Text(_isCorrection ? '修正回收' : '记录回收'),
+      content: SizedBox(
+        width: 360,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '${batch.assetTypeLabel} · ${batch.stockName} ${batch.stockCode}',
+              style:
+                  const TextStyle(color: AppTheme.textSecondary, fontSize: 13),
             ),
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _qtyController,
-            keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            inputFormatters: [
-              if (batch.isFund)
-                FilteringTextInputFormatter.allow(RegExp(r'^\d+\.?\d{0,4}'))
-              else
+            const SizedBox(height: 14),
+            TextField(
+              controller: _priceController,
+              onChanged: (_) {
+                _syncAmountFromPriceQty();
+                setState(() {});
+              },
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              inputFormatters: [
+                if (batch.isFund)
+                  FilteringTextInputFormatter.allow(RegExp(r'^\d+\.?\d{0,4}'))
+                else
+                  FilteringTextInputFormatter.allow(RegExp(r'^\d+\.?\d{0,3}')),
+              ],
+              decoration: InputDecoration(
+                labelText: batch.isFund ? '回收确认净值' : '回收参考价格',
+                errorText: _priceError,
+              ),
+            ),
+            _DialogHelpText(
+              '已带入播种计划回收触发价 ¥${Formatters.price(_plannedRecoverPrice)}',
+            ),
+            const SizedBox(height: 12),
+            _DialogDateField(
+              date: _sellDate,
+              onTap: _pickSellDate,
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _qtyController,
+              onChanged: (_) {
+                _syncAmountFromPriceQty();
+                setState(() {});
+              },
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              inputFormatters: [
                 FilteringTextInputFormatter.digitsOnly,
-            ],
-            decoration: InputDecoration(
-              labelText: batch.isFund ? '累计回收份额' : '累计回收股数',
-              helperText:
-                  '最多 ${Formatters.quantity(batch.quantity)} ${batch.quantityUnit}，当前剩余 ${Formatters.quantity(batch.remainingQuantity)} ${batch.quantityUnit}',
-              errorText: _quantityError,
+              ],
+              decoration: InputDecoration(
+                labelText: batch.isFund ? '本次回收份额' : '本次回收股数',
+                errorText: _quantityError,
+              ),
             ),
-          ),
-        ],
+            _DialogHelpText(
+              _isCorrection
+                  ? '修正累计回收数量，最多 ${Formatters.quantity(batch.quantity)} ${batch.quantityUnit}'
+                  : '已带入计划回收 ${Formatters.quantity(_initialRecoverQuantity)} ${batch.quantityUnit}，当前剩余 ${Formatters.quantity(batch.remainingQuantity)} ${batch.quantityUnit}',
+            ),
+            if (!_isCorrection) ...[
+              const SizedBox(height: 6),
+              Text(
+                '计划保留种子 ${Formatters.quantity(_plannedFreeQuantity)} ${batch.quantityUnit}',
+                style:
+                    const TextStyle(color: AppTheme.accentGold, fontSize: 12),
+              ),
+            ],
+            const SizedBox(height: 12),
+            TextField(
+              controller: _amountController,
+              onChanged: (_) {
+                _syncQtyFromAmount();
+                setState(() {});
+              },
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              inputFormatters: [
+                FilteringTextInputFormatter.allow(RegExp(r'^\d+\.?\d{0,2}')),
+              ],
+              decoration: const InputDecoration(
+                labelText: '回收金额',
+              ),
+            ),
+            const _DialogHelpText('录入金额后按价格自动反算可回收数量'),
+          ],
+        ),
       ),
       actions: [
         TextButton(
@@ -1219,6 +1545,73 @@ class _RecoverDialogState extends State<_RecoverDialog> {
           child: const Text('保存'),
         ),
       ],
+    );
+  }
+}
+
+class _DialogHelpText extends StatelessWidget {
+  final String text;
+  const _DialogHelpText(this.text);
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: Text(
+        text,
+        softWrap: true,
+        style: const TextStyle(
+          color: AppTheme.textSecondary,
+          fontSize: 12,
+          height: 1.35,
+        ),
+      ),
+    );
+  }
+}
+
+class _DialogDateField extends StatelessWidget {
+  final DateTime date;
+  final VoidCallback onTap;
+
+  const _DialogDateField({
+    required this.date,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(10),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+        decoration: BoxDecoration(
+          color: AppTheme.bgCardLight,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: AppTheme.borderColor, width: 0.5),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.calendar_today,
+                color: AppTheme.textMuted, size: 16),
+            const SizedBox(width: 10),
+            const Text(
+              '回收日期',
+              style: TextStyle(color: AppTheme.textSecondary, fontSize: 13),
+            ),
+            const Spacer(),
+            Text(
+              Formatters.dateTimeFull(date),
+              style: const TextStyle(
+                color: AppTheme.textPrimary,
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -1297,8 +1690,9 @@ class _ImportTextDialogState extends State<_ImportTextDialog> {
           (n) => n >= 1 && n != double.tryParse(_priceController.text),
           orElse: () => numbers.last,
         );
-        _qtyController.text = _assetType == 'fund'
-            ? quantity.toStringAsFixed(4)
+        final lotQuantity = (quantity / 100).floor() * 100;
+        _qtyController.text = lotQuantity > 0
+            ? lotQuantity.toStringAsFixed(0)
             : quantity.toStringAsFixed(0);
       }
       _error = null;
@@ -1320,14 +1714,17 @@ class _ImportTextDialogState extends State<_ImportTextDialog> {
       setState(() => _error = '请确认代码、名称、价格/净值和数量/份额都有效');
       return;
     }
-    if (_assetType == 'stock' && quantity % 100 != 0) {
-      setState(() => _error = 'A股数量建议按100股整数倍记录');
+    if (quantity % 100 != 0) {
+      setState(() => _error =
+          _assetType == 'fund' ? '基金份额建议按100份整数倍记录' : 'A股数量建议按100股整数倍记录');
       return;
     }
     Navigator.pop(
       context,
       HoldingBatch(
         assetType: _assetType,
+        market:
+            _assetType == 'stock' ? StockApiService().inferMarket(code) : 'SH',
         stockCode: code,
         stockName: name,
         buyPrice: price,

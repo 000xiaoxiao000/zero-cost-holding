@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../theme/app_theme.dart';
 import '../utils/formatters.dart';
+import '../navigation/app_navigation.dart';
 import '../providers/holding_providers.dart';
 import '../models/holding_batch.dart';
 import '../models/stock.dart';
@@ -19,13 +20,13 @@ class AddHoldingBatchScreen extends ConsumerStatefulWidget {
       _AddHoldingBatchScreenState();
 }
 
-class _AddHoldingBatchScreenState
-    extends ConsumerState<AddHoldingBatchScreen> {
+class _AddHoldingBatchScreenState extends ConsumerState<AddHoldingBatchScreen> {
   final _formKey = GlobalKey<FormState>();
   late final TextEditingController _codeController;
   late final TextEditingController _nameController;
   late final TextEditingController _priceController;
   late final TextEditingController _qtyController;
+  late final TextEditingController _amountController;
   final _commissionController = TextEditingController(text: '0');
   final _noteController = TextEditingController();
 
@@ -34,6 +35,7 @@ class _AddHoldingBatchScreenState
   late String _market;
   List<Stock> _searchResults = [];
   bool _isSearching = false;
+  bool _syncing = false;
 
   bool get _isFund => _assetType == 'fund';
 
@@ -54,9 +56,11 @@ class _AddHoldingBatchScreenState
     );
     _qtyController = TextEditingController(
       text: ctx?.planQuantity != null
-          ? ctx!.planQuantity!.toStringAsFixed(_assetType == 'fund' ? 4 : 0)
+          ? ctx!.planQuantity!.toStringAsFixed(0)
           : '',
     );
+    _amountController = TextEditingController();
+    _syncAmountFromPriceQty();
   }
 
   @override
@@ -65,6 +69,7 @@ class _AddHoldingBatchScreenState
     _nameController.dispose();
     _priceController.dispose();
     _qtyController.dispose();
+    _amountController.dispose();
     _commissionController.dispose();
     _noteController.dispose();
     super.dispose();
@@ -99,6 +104,10 @@ class _AddHoldingBatchScreenState
       initialDate: _buyDate,
       firstDate: DateTime(2000),
       lastDate: DateTime.now(),
+      locale: const Locale('zh', 'CN'),
+      helpText: '选择记录日期',
+      cancelText: '取消',
+      confirmText: '确定',
       builder: (ctx, child) => Theme(
         data: Theme.of(ctx).copyWith(
           colorScheme: const ColorScheme.dark(
@@ -109,13 +118,48 @@ class _AddHoldingBatchScreenState
         child: child!,
       ),
     );
-    if (picked != null) setState(() => _buyDate = picked);
+    if (picked == null || !mounted) return;
+
+    final pickedTime = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(_buyDate),
+      helpText: '选择记录时间',
+      cancelText: '取消',
+      confirmText: '确定',
+      hourLabelText: '时',
+      minuteLabelText: '分',
+      builder: (ctx, child) => Theme(
+        data: Theme.of(ctx).copyWith(
+          colorScheme: const ColorScheme.dark(
+            primary: AppTheme.accent,
+            surface: AppTheme.bgCard,
+          ),
+        ),
+        child: MediaQuery(
+          data: MediaQuery.of(ctx).copyWith(alwaysUse24HourFormat: true),
+          child: child!,
+        ),
+      ),
+    );
+    if (pickedTime == null) return;
+
+    setState(
+      () => _buyDate = DateTime(
+        picked.year,
+        picked.month,
+        picked.day,
+        pickedTime.hour,
+        pickedTime.minute,
+      ),
+    );
   }
 
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
+    final ctx = widget.stockContext;
     final batch = HoldingBatch(
       assetType: _assetType,
+      market: _market,
       stockCode: _codeController.text.trim(),
       stockName: _nameController.text.trim(),
       buyPrice: double.parse(_priceController.text),
@@ -125,9 +169,18 @@ class _AddHoldingBatchScreenState
       note: _noteController.text.trim().isEmpty
           ? null
           : _noteController.text.trim(),
+      planRecoverPrice: ctx?.planRecoverPrice,
+      planRecoverQuantity: ctx?.planRecoverQuantity,
+      planCapital: ctx?.planCapital,
+      planStartPrice: ctx?.planStartPrice,
+      planSeedCount: ctx?.planSeedCount,
+      planDropStep: ctx?.planDropStep,
+      planRebound: ctx?.planRebound,
+      planCommission: ctx?.planCommission,
+      planWeightModeKey: ctx?.planWeightModeKey,
     );
     await ref.read(holdingPositionsProvider.notifier).addBatch(batch);
-    if (mounted) Navigator.pop(context, true);
+    if (mounted) AppNavigation.goHomeTab(context, HomeTab.holding);
   }
 
   double get _totalCost {
@@ -137,10 +190,42 @@ class _AddHoldingBatchScreenState
     return price * qty + comm;
   }
 
+  void _syncAmountFromPriceQty() {
+    if (_syncing) return;
+    final price = double.tryParse(_priceController.text);
+    final qty = double.tryParse(_qtyController.text);
+    final comm = double.tryParse(_commissionController.text) ?? 0.0;
+    if (price == null || qty == null || price <= 0 || qty <= 0) {
+      return;
+    }
+    _syncing = true;
+    _amountController.text = (price * qty + comm).toStringAsFixed(2);
+    _syncing = false;
+  }
+
+  void _syncQtyFromAmount() {
+    if (_syncing) return;
+    final price = double.tryParse(_priceController.text);
+    final amount = double.tryParse(_amountController.text);
+    final comm = double.tryParse(_commissionController.text) ?? 0.0;
+    if (price == null || amount == null || price <= 0 || amount <= comm) {
+      return;
+    }
+    final rawQty = (amount - comm) / price;
+    final qty = (rawQty / 100).floor() * 100;
+    if (qty <= 0) return;
+    _syncing = true;
+    _qtyController.text = qty.toStringAsFixed(0);
+    _syncing = false;
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('记录播种')),
+      appBar: AppBar(
+        title: const Text('记录播种'),
+        actions: const [HomeTabMenuButton()],
+      ),
       body: GestureDetector(
         onTap: () => FocusScope.of(context).unfocus(),
         child: Form(
@@ -189,6 +274,10 @@ class _AddHoldingBatchScreenState
                 _LabeledField(
                   label: _isFund ? '配置净值' : '配置价格',
                   controller: _priceController,
+                  onChanged: (_) {
+                    _syncAmountFromPriceQty();
+                    setState(() {});
+                  },
                   hint: _isFund ? '例：1.2365' : '例：15.36',
                   keyboardType:
                       const TextInputType.numberWithOptions(decimal: true),
@@ -213,17 +302,17 @@ class _AddHoldingBatchScreenState
                 ),
                 const SizedBox(height: 12),
                 _LabeledField(
-                  label: _isFund ? '配置份额' : '配置数量（股）',
+                  label: _isFund ? '配置份额（100份倍数）' : '配置数量（100股倍数）',
                   controller: _qtyController,
+                  onChanged: (_) {
+                    _syncAmountFromPriceQty();
+                    setState(() {});
+                  },
                   hint: _isFund ? '例：8123.45' : '例：1000',
                   keyboardType:
                       const TextInputType.numberWithOptions(decimal: true),
                   inputFormatters: [
-                    if (_isFund)
-                      FilteringTextInputFormatter.allow(
-                          RegExp(r'^\d+\.?\d{0,4}'))
-                    else
-                      FilteringTextInputFormatter.digitsOnly,
+                    FilteringTextInputFormatter.digitsOnly,
                   ],
                   validator: (v) {
                     if (v == null || v.isEmpty) {
@@ -233,16 +322,36 @@ class _AddHoldingBatchScreenState
                     if (n == null || n <= 0) {
                       return _isFund ? '份额必须大于0' : '数量必须大于0';
                     }
-                    if (!_isFund && n % 100 != 0) {
-                      return 'A股数量须为100的倍数';
+                    if (n % 100 != 0) {
+                      return _isFund ? '基金份额须为100份的倍数' : 'A股数量须为100股的倍数';
                     }
                     return null;
                   },
                 ),
                 const SizedBox(height: 12),
                 _LabeledField(
+                  label: '播种本金/金额（元）',
+                  controller: _amountController,
+                  hint: '可自动计算，也可输入后反算数量',
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  inputFormatters: [
+                    FilteringTextInputFormatter.allow(RegExp(r'^\d+\.?\d{0,2}'))
+                  ],
+                  onChanged: (_) {
+                    _syncQtyFromAmount();
+                    setState(() {});
+                  },
+                  validator: null,
+                ),
+                const SizedBox(height: 12),
+                _LabeledField(
                   label: '佣金/手续费（元）',
                   controller: _commissionController,
+                  onChanged: (_) {
+                    _syncAmountFromPriceQty();
+                    setState(() {});
+                  },
                   hint: '例：5.00',
                   keyboardType:
                       const TextInputType.numberWithOptions(decimal: true),
@@ -327,6 +436,7 @@ class _LabeledField extends StatelessWidget {
   final String hint;
   final TextInputType? keyboardType;
   final List<TextInputFormatter>? inputFormatters;
+  final ValueChanged<String>? onChanged;
   final String? Function(String?)? validator;
 
   const _LabeledField({
@@ -335,6 +445,7 @@ class _LabeledField extends StatelessWidget {
     required this.hint,
     this.keyboardType,
     this.inputFormatters,
+    this.onChanged,
     required this.validator,
   });
 
@@ -351,6 +462,7 @@ class _LabeledField extends StatelessWidget {
           controller: controller,
           keyboardType: keyboardType,
           inputFormatters: inputFormatters,
+          onChanged: onChanged,
           style: const TextStyle(color: AppTheme.textPrimary),
           decoration: InputDecoration(hintText: hint),
           validator: validator,
@@ -581,17 +693,14 @@ class _MarketSelector extends StatelessWidget {
                       : AppTheme.bgCardLight,
                   borderRadius: BorderRadius.circular(8),
                   border: Border.all(
-                      color:
-                          selected ? AppTheme.accent : AppTheme.borderColor),
+                      color: selected ? AppTheme.accent : AppTheme.borderColor),
                 ),
                 child: Text(
                   entry.value,
                   style: TextStyle(
-                    color:
-                        selected ? AppTheme.accent : AppTheme.textSecondary,
+                    color: selected ? AppTheme.accent : AppTheme.textSecondary,
                     fontSize: 13,
-                    fontWeight:
-                        selected ? FontWeight.w600 : FontWeight.normal,
+                    fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
                   ),
                 ),
               ),
@@ -631,7 +740,7 @@ class _DatePickerField extends StatelessWidget {
                 const Icon(Icons.calendar_today,
                     color: AppTheme.textMuted, size: 16),
                 const SizedBox(width: 10),
-                Text(Formatters.date(date),
+                Text(Formatters.dateTimeFull(date),
                     style: const TextStyle(
                         color: AppTheme.textPrimary, fontSize: 15)),
               ],
@@ -662,7 +771,7 @@ class _CostPreview extends StatelessWidget {
           const Text('本次播种总成本',
               style: TextStyle(color: AppTheme.textSecondary, fontSize: 14)),
           Text(
-            '¥ ${Formatters.largeNumber(totalCost)}',
+            '¥ ${Formatters.money(totalCost)}',
             style: const TextStyle(
                 color: AppTheme.accentGold,
                 fontSize: 18,

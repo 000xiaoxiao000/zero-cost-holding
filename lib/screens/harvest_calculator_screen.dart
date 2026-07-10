@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/stock_context.dart';
+import '../navigation/app_navigation.dart';
 import '../providers/stock_providers.dart';
 import '../theme/app_theme.dart';
 import '../utils/formatters.dart';
@@ -116,8 +117,7 @@ class _HarvestCalculatorScreenState
       (double.tryParse(_gridStepController.text) ?? 0) / 100;
   double get _atr => double.tryParse(_atrController.text) ?? 0;
   double get _atrMultiple => double.tryParse(_atrMultipleController.text) ?? 0;
-  double get _recentHigh =>
-      double.tryParse(_recentHighController.text) ?? 0;
+  double get _recentHigh => double.tryParse(_recentHighController.text) ?? 0;
 
   String get _unit => _isFund ? '份' : '股';
 
@@ -193,7 +193,10 @@ class _HarvestCalculatorScreenState
     final plan = _plan;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('收割计算')),
+      appBar: AppBar(
+        title: const Text('收割计算'),
+        actions: const [HomeTabMenuButton()],
+      ),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 88),
         children: [
@@ -701,16 +704,14 @@ class _ZeroCostActionCard extends StatelessWidget {
           ),
           _MetricLine(
             label: '预计回收现金',
-            value: hasData
-                ? Formatters.largeNumber(plan.recoveredAtUpper)
-                : '—',
+            value: hasData ? Formatters.money(plan.recoveredAtUpper) : '—',
             color: AppTheme.primaryGreen,
           ),
           _MetricLine(
             label: canZero ? '剩余零成本仓位' : '回收后仍差本金',
             value: canZero
                 ? '${Formatters.quantity(plan.freeQuantity)}$unit'
-                : Formatters.largeNumber(plan.gapAfterSell),
+                : Formatters.money(plan.gapAfterSell),
             color: canZero ? AppTheme.accentGold : AppTheme.riskRed,
           ),
         ],
@@ -742,7 +743,7 @@ class _IrrigationCard extends StatelessWidget {
         ),
         _MetricLine(
           label: '预计占用现金',
-          value: Formatters.largeNumber(plan.suggestedBuyCash),
+          value: Formatters.money(plan.suggestedBuyCash),
           color: AppTheme.textPrimary,
         ),
       ],

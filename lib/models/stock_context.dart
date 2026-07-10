@@ -4,7 +4,7 @@ class StockContext {
   final String? code;
   final String? name;
   final String? assetType; // 'stock' | 'fund'
-  final String? market;    // 'SH' | 'SZ'
+  final String? market; // 'SH' | 'SZ'
 
   /// 来自排雷页
   final double? pePercentile;
@@ -13,22 +13,31 @@ class StockContext {
   final double? currentPrice;
 
   /// 来自持仓（用于收割计算）
-  final double? remainingCost;   // effectiveRemainingCost
-  final double? remainingQty;    // totalRemaining
-  final double? avgCostPrice;    // avgHoldingCost
+  final double? remainingCost; // effectiveRemainingCost
+  final double? remainingQty; // totalRemaining
+  final double? avgCostPrice; // avgHoldingCost
 
   /// 来自播种计划（用于记录入账预填）
   final double? planBuyPrice;
   final double? planQuantity;
+  final double? planRecoverPrice;
+  final double? planRecoverQuantity;
+  final double? planCapital;
+  final double? planStartPrice;
+  final int? planSeedCount;
+  final double? planDropStep;
+  final double? planRebound;
+  final double? planCommission;
+  final String? planWeightModeKey;
 
   /// 来自排雷页策略顾问的算法推荐（跨页面预填计划参数）
-  final String? seedAlgo;        // 'pyramid' | 'grid' | 'dca' | 'equal'
-  final String? weightModeKey;   // 播种页 WeightMode 名称
-  final String? harvestAlgo;     // 'grid' | 'chandelier' | 'percentile'
-  final String? harvestModeKey;  // 收割页 mode 名称
+  final String? seedAlgo; // 'pyramid' | 'grid' | 'dca' | 'equal'
+  final String? weightModeKey; // 播种页 WeightMode 名称
+  final String? harvestAlgo; // 'grid' | 'chandelier' | 'percentile'
+  final String? harvestModeKey; // 收割页 mode 名称
   final int? recommendSeedCount; // 推荐批数
-  final double? recommendDropStep;  // 推荐下跌间距（%）
-  final double? recommendGridStep;  // 推荐收割网格间距（%）
+  final double? recommendDropStep; // 推荐下跌间距（%）
+  final double? recommendGridStep; // 推荐收割网格间距（%）
   final double? recommendAtrMultiple; // 推荐 ATR/吊灯倍数
 
   const StockContext({
@@ -45,6 +54,15 @@ class StockContext {
     this.avgCostPrice,
     this.planBuyPrice,
     this.planQuantity,
+    this.planRecoverPrice,
+    this.planRecoverQuantity,
+    this.planCapital,
+    this.planStartPrice,
+    this.planSeedCount,
+    this.planDropStep,
+    this.planRebound,
+    this.planCommission,
+    this.planWeightModeKey,
     this.seedAlgo,
     this.weightModeKey,
     this.harvestAlgo,
@@ -69,6 +87,15 @@ class StockContext {
     double? avgCostPrice,
     double? planBuyPrice,
     double? planQuantity,
+    double? planRecoverPrice,
+    double? planRecoverQuantity,
+    double? planCapital,
+    double? planStartPrice,
+    int? planSeedCount,
+    double? planDropStep,
+    double? planRebound,
+    double? planCommission,
+    String? planWeightModeKey,
     String? seedAlgo,
     String? weightModeKey,
     String? harvestAlgo,
@@ -92,6 +119,15 @@ class StockContext {
       avgCostPrice: avgCostPrice ?? this.avgCostPrice,
       planBuyPrice: planBuyPrice ?? this.planBuyPrice,
       planQuantity: planQuantity ?? this.planQuantity,
+      planRecoverPrice: planRecoverPrice ?? this.planRecoverPrice,
+      planRecoverQuantity: planRecoverQuantity ?? this.planRecoverQuantity,
+      planCapital: planCapital ?? this.planCapital,
+      planStartPrice: planStartPrice ?? this.planStartPrice,
+      planSeedCount: planSeedCount ?? this.planSeedCount,
+      planDropStep: planDropStep ?? this.planDropStep,
+      planRebound: planRebound ?? this.planRebound,
+      planCommission: planCommission ?? this.planCommission,
+      planWeightModeKey: planWeightModeKey ?? this.planWeightModeKey,
       seedAlgo: seedAlgo ?? this.seedAlgo,
       weightModeKey: weightModeKey ?? this.weightModeKey,
       harvestAlgo: harvestAlgo ?? this.harvestAlgo,

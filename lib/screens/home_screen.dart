@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../navigation/app_navigation.dart';
 import '../theme/app_theme.dart';
 import 'watchlist_screen.dart';
 import 'holding_tracker_screen.dart';
@@ -15,11 +16,30 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  // 5个底部标签：自选 / 排雷 / 计划 / 持仓 / 策略
-  int _currentIndex = 2; // 默认进入「计划」
+  // 5个底部标签：选股 / 排雷 / 计划 / 持仓 / 策略
+  int _currentIndex = 0; // 默认进入「选股」
 
   // "计划"标签内的子页面 tab（0=播种 1=收割）
   int _planSubIndex = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    AppNavigation.tabRequests.addListener(_handleTabRequest);
+  }
+
+  @override
+  void dispose() {
+    AppNavigation.tabRequests.removeListener(_handleTabRequest);
+    super.dispose();
+  }
+
+  void _handleTabRequest() {
+    final tab = AppNavigation.tabRequests.value;
+    if (tab == null || !mounted) return;
+    setState(() => _currentIndex = tab.tabIndex);
+    AppNavigation.tabRequests.value = null;
+  }
 
   Widget get _currentPage {
     switch (_currentIndex) {
@@ -63,7 +83,7 @@ class _HomeScreenState extends State<HomeScreen> {
             BottomNavigationBarItem(
               icon: Icon(Icons.bookmark_outline),
               activeIcon: Icon(Icons.bookmark),
-              label: '自选',
+              label: '选股',
             ),
             BottomNavigationBarItem(
               icon: Icon(Icons.health_and_safety_outlined),
@@ -201,8 +221,7 @@ class _PlanSubTab extends StatelessWidget {
               : AppTheme.bgCardLight,
           borderRadius: BorderRadius.circular(10),
           border: Border.all(
-            color:
-                selected ? AppTheme.accent : AppTheme.borderColor,
+            color: selected ? AppTheme.accent : AppTheme.borderColor,
           ),
         ),
         child: Row(
@@ -219,8 +238,7 @@ class _PlanSubTab extends StatelessWidget {
               style: TextStyle(
                 color: selected ? AppTheme.accent : AppTheme.textSecondary,
                 fontSize: 13,
-                fontWeight:
-                    selected ? FontWeight.w700 : FontWeight.normal,
+                fontWeight: selected ? FontWeight.w700 : FontWeight.normal,
               ),
             ),
           ],

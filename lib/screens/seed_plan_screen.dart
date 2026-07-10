@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../models/stock_context.dart';
+import '../navigation/app_navigation.dart';
 import '../screens/add_holding_batch_screen.dart';
 import '../theme/app_theme.dart';
 import '../utils/formatters.dart';
@@ -11,24 +12,42 @@ import '../utils/formatters.dart';
 // ── 仓位权重模式 ────────────────────────────────────────────────────────────────
 
 enum WeightMode {
-  pyramid,   // 正金字塔：越跌越重（后批权重递增）
-  equal,     // 等额：每批相同资金
-  inverted,  // 倒金字塔：越跌越轻（后批权重递减）
+  pyramid, // 正金字塔：越跌越重（后批权重递增）
+  equal, // 等额：每批相同资金
+  inverted, // 倒金字塔：越跌越轻（后批权重递减）
 }
 
 extension WeightModeLabel on WeightMode {
-  String get label {
+  String get key {
     switch (this) {
-      case WeightMode.pyramid:  return '正金字塔';
-      case WeightMode.equal:    return '等额';
-      case WeightMode.inverted: return '倒金字塔';
+      case WeightMode.pyramid:
+        return 'pyramid';
+      case WeightMode.equal:
+        return 'equal';
+      case WeightMode.inverted:
+        return 'inverted';
     }
   }
+
+  String get label {
+    switch (this) {
+      case WeightMode.pyramid:
+        return '正金字塔';
+      case WeightMode.equal:
+        return '等额';
+      case WeightMode.inverted:
+        return '倒金字塔';
+    }
+  }
+
   String get hint {
     switch (this) {
-      case WeightMode.pyramid:  return '越跌仓位越重';
-      case WeightMode.equal:    return '每批资金相等';
-      case WeightMode.inverted: return '越跌仓位越轻';
+      case WeightMode.pyramid:
+        return '越跌仓位越重';
+      case WeightMode.equal:
+        return '每批资金相等';
+      case WeightMode.inverted:
+        return '越跌仓位越轻';
     }
   }
 }
@@ -40,16 +59,23 @@ enum DcaPeriod { weekly, biweekly, monthly }
 extension DcaPeriodLabel on DcaPeriod {
   String get label {
     switch (this) {
-      case DcaPeriod.weekly:    return '每周';
-      case DcaPeriod.biweekly: return '每两周';
-      case DcaPeriod.monthly:  return '每月';
+      case DcaPeriod.weekly:
+        return '每周';
+      case DcaPeriod.biweekly:
+        return '每两周';
+      case DcaPeriod.monthly:
+        return '每月';
     }
   }
+
   int get days {
     switch (this) {
-      case DcaPeriod.weekly:    return 7;
-      case DcaPeriod.biweekly: return 14;
-      case DcaPeriod.monthly:  return 30;
+      case DcaPeriod.weekly:
+        return 7;
+      case DcaPeriod.biweekly:
+        return 14;
+      case DcaPeriod.monthly:
+        return 30;
     }
   }
 }
@@ -96,8 +122,11 @@ class _SeedPlanScreenState extends State<SeedPlanScreen>
     _tabController = TabController(length: 2, vsync: this);
     final ctx = widget.stockContext;
     _assetType = ctx?.assetType ?? 'stock';
-    _capitalController = TextEditingController(text: '100000');
-    final startPrice = ctx?.currentPrice ?? ctx?.avgCostPrice;
+    _capitalController = TextEditingController(
+      text: (ctx?.planCapital ?? 100000).toStringAsFixed(0),
+    );
+    final startPrice =
+        ctx?.planStartPrice ?? ctx?.currentPrice ?? ctx?.avgCostPrice;
     _startPriceController = TextEditingController(
       text: startPrice != null ? startPrice.toStringAsFixed(3) : '10.000',
     );
@@ -106,20 +135,27 @@ class _SeedPlanScreenState extends State<SeedPlanScreen>
     }
     // 排雷页策略顾问推荐参数，缺失时回落到经验默认值
     _seedCountController = TextEditingController(
-      text: (ctx?.recommendSeedCount ?? 5).toString(),
+      text: (ctx?.planSeedCount ?? ctx?.recommendSeedCount ?? 5).toString(),
     );
     _dropStepController = TextEditingController(
-      text: (ctx?.recommendDropStep ?? 8).toString(),
+      text: (ctx?.planDropStep ?? ctx?.recommendDropStep ?? 8).toString(),
     );
-    _weightMode = _weightModeFromKey(ctx?.weightModeKey);
+    _reboundController.text = (ctx?.planRebound ?? 30).toString();
+    _commissionController.text = (ctx?.planCommission ?? 5).toString();
+    _weightMode =
+        _weightModeFromKey(ctx?.planWeightModeKey ?? ctx?.weightModeKey);
   }
 
   WeightMode _weightModeFromKey(String? key) {
     switch (key) {
-      case 'pyramid':  return WeightMode.pyramid;
-      case 'inverted': return WeightMode.inverted;
-      case 'equal':    return WeightMode.equal;
-      default:         return WeightMode.equal;
+      case 'pyramid':
+        return WeightMode.pyramid;
+      case 'inverted':
+        return WeightMode.inverted;
+      case 'equal':
+        return WeightMode.equal;
+      default:
+        return WeightMode.equal;
     }
   }
 
@@ -147,14 +183,17 @@ class _SeedPlanScreenState extends State<SeedPlanScreen>
     final value = int.tryParse(_seedCountController.text) ?? 0;
     return value.clamp(1, 12).toInt();
   }
+
   double get _dropStep {
     final value = (double.tryParse(_dropStepController.text) ?? 0) / 100;
     return value.clamp(0.0, 0.95).toDouble();
   }
+
   double get _rebound {
     final value = (double.tryParse(_reboundController.text) ?? 0) / 100;
     return math.max(0.0, value);
   }
+
   double get _commission => double.tryParse(_commissionController.text) ?? 0;
 
   /// 正金字塔权重：第 i 批（0-indexed）权重 = i+1；归一化后返回每批资金
@@ -181,18 +220,15 @@ class _SeedPlanScreenState extends State<SeedPlanScreen>
     return List.generate(_seedCount, (i) {
       final buyPrice = _startPrice * math.pow(1 - _dropStep, i);
       final trancheCapital = capitals[i];
-      final quantity = _isFund
-          ? ((trancheCapital - _commission) / buyPrice * 10000).floor() / 10000
-          : (((trancheCapital - _commission) / buyPrice / 100).floor() * 100)
+      final quantity =
+          (((trancheCapital - _commission) / buyPrice / 100).floor() * 100)
               .toDouble();
       final cost = quantity * buyPrice + _commission;
       final targetPrice = buyPrice * (1 + _rebound);
       final recoverQuantity = targetPrice > 0
           ? math.min(
               quantity,
-              _isFund
-                  ? ((cost / targetPrice) * 10000).ceil() / 10000
-                  : (cost / targetPrice).ceilToDouble(),
+              ((cost / targetPrice / 100).ceil() * 100).toDouble(),
             )
           : 0.0;
       return _SeedSlice(
@@ -214,6 +250,7 @@ class _SeedPlanScreenState extends State<SeedPlanScreen>
     final v = int.tryParse(_dcaSessionsController.text) ?? 0;
     return v.clamp(1, 60).toInt();
   }
+
   double? get _dcaPriceLimit =>
       _dcaUsePriceLimit ? double.tryParse(_dcaPriceLimitController.text) : null;
   double get _dcaRebound {
@@ -243,6 +280,7 @@ class _SeedPlanScreenState extends State<SeedPlanScreen>
     return Scaffold(
       appBar: AppBar(
         title: Text(ctx?.name != null ? '播种计划 · ${ctx!.name}' : '播种计划'),
+        actions: const [HomeTabMenuButton()],
         bottom: TabBar(
           controller: _tabController,
           labelColor: AppTheme.accent,
@@ -251,7 +289,9 @@ class _SeedPlanScreenState extends State<SeedPlanScreen>
           indicatorSize: TabBarIndicatorSize.label,
           tabs: const [
             Tab(icon: Icon(Icons.grass_outlined, size: 16), text: '分批播种'),
-            Tab(icon: Icon(Icons.calendar_today_outlined, size: 16), text: '定投模式'),
+            Tab(
+                icon: Icon(Icons.calendar_today_outlined, size: 16),
+                text: '定投模式'),
           ],
         ),
       ),
@@ -287,13 +327,40 @@ class _SeedPlanScreenState extends State<SeedPlanScreen>
             usePriceLimit: _dcaUsePriceLimit,
             assetType: _assetType,
             onPeriodChanged: (p) => setState(() => _dcaPeriod = p),
-            onUsePriceLimitChanged: (v) => setState(() => _dcaUsePriceLimit = v),
+            onUsePriceLimitChanged: (v) =>
+                setState(() => _dcaUsePriceLimit = v),
             onChanged: () => setState(() {}),
           ),
         ],
       ),
     );
   }
+}
+
+StockContext _withPlanSnapshot({
+  required StockContext ctx,
+  required _SeedSlice slice,
+  required double capital,
+  required double startPrice,
+  required int seedCount,
+  required double dropStepPct,
+  required double reboundPct,
+  required double commission,
+  required WeightMode weightMode,
+}) {
+  return ctx.copyWith(
+    planBuyPrice: slice.buyPrice,
+    planQuantity: slice.quantity,
+    planRecoverPrice: slice.targetPrice,
+    planRecoverQuantity: slice.recoverQuantity,
+    planCapital: capital,
+    planStartPrice: startPrice,
+    planSeedCount: seedCount,
+    planDropStep: dropStepPct,
+    planRebound: reboundPct,
+    planCommission: commission,
+    planWeightModeKey: weightMode.key,
+  );
 }
 
 // ── 分批播种 Tab ────────────────────────────────────────────────────────────────
@@ -339,6 +406,17 @@ class _SeedPlanTab extends StatelessWidget {
     final totalQuantity = plan.fold(0.0, (sum, s) => sum + s.quantity);
     final freeQuantity = plan.fold(0.0, (sum, s) => sum + s.freeQuantity);
     final unit = isFund ? '份' : '股';
+    StockContext planContext(_SeedSlice slice) => _withPlanSnapshot(
+          ctx: ctx!,
+          slice: slice,
+          capital: capital,
+          startPrice: double.tryParse(startPriceController.text) ?? 0,
+          seedCount: int.tryParse(seedCountController.text) ?? plan.length,
+          dropStepPct: double.tryParse(dropStepController.text) ?? 0,
+          reboundPct: double.tryParse(reboundController.text) ?? 0,
+          commission: double.tryParse(commissionController.text) ?? 0,
+          weightMode: weightMode,
+        );
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 88),
@@ -351,9 +429,11 @@ class _SeedPlanTab extends StatelessWidget {
             subtitle: '先拆仓播种，价格或净值越低越有计划；触发回收条件后记录部分现金回笼，保留剩余资产作为零成本种子。',
           ),
         const SizedBox(height: 16),
-        if (ctx != null && (ctx!.pePercentile != null || ctx!.industryCycle != null))
+        if (ctx != null &&
+            (ctx!.pePercentile != null || ctx!.industryCycle != null))
           _ValuationHintCard(ctx: ctx!),
-        if (ctx != null && (ctx!.pePercentile != null || ctx!.industryCycle != null))
+        if (ctx != null &&
+            (ctx!.pePercentile != null || ctx!.industryCycle != null))
           const SizedBox(height: 16),
         _PlannerForm(
           capitalController: capitalController,
@@ -396,10 +476,7 @@ class _SeedPlanTab extends StatelessWidget {
                             context,
                             MaterialPageRoute(
                               builder: (_) => AddHoldingBatchScreen(
-                                stockContext: ctx!.copyWith(
-                                  planBuyPrice: slice.buyPrice,
-                                  planQuantity: slice.quantity,
-                                ),
+                                stockContext: planContext(slice),
                               ),
                             ),
                           ),
@@ -407,7 +484,11 @@ class _SeedPlanTab extends StatelessWidget {
               )),
         const SizedBox(height: 12),
         if (plan.isNotEmpty && ctx != null)
-          _QuickRecordBar(ctx: ctx!, firstSlice: plan.first, isFund: isFund),
+          _QuickRecordBar(
+            ctx: planContext(plan.first),
+            firstSlice: plan.first,
+            isFund: isFund,
+          ),
         if (plan.isNotEmpty && ctx != null) const SizedBox(height: 12),
         const _RiskRules(),
       ],
@@ -475,7 +556,8 @@ class _DcaPlanTab extends StatelessWidget {
           sessions: plan.length,
           totalAmount: totalAmount,
           period: period,
-          priceLimit: usePriceLimit ? double.tryParse(priceLimitController.text) : null,
+          priceLimit:
+              usePriceLimit ? double.tryParse(priceLimitController.text) : null,
           reboundPct: dcaRebound,
         ),
         const SizedBox(height: 16),
@@ -537,8 +619,8 @@ class _StockContextBanner extends StatelessWidget {
               if (ctx.code != null)
                 Text(
                   ctx.code!,
-                  style: const TextStyle(
-                      color: AppTheme.textMuted, fontSize: 13),
+                  style:
+                      const TextStyle(color: AppTheme.textMuted, fontSize: 13),
                 ),
             ],
           ),
@@ -574,9 +656,8 @@ class _ValuationHintCard extends StatelessWidget {
       positionHint = 'PE百分位 ${pe.toInt()}%，估值偏高，建议轻仓首批观察';
       hintColor = AppTheme.riskRed;
     } else {
-      positionHint = pe != null
-          ? 'PE百分位 ${pe.toInt()}%，估值中性，按计划正常播种'
-          : '未获取到估值百分位';
+      positionHint =
+          pe != null ? 'PE百分位 ${pe.toInt()}%，估值中性，按计划正常播种' : '未获取到估值百分位';
       hintColor = AppTheme.accentGold;
     }
 
@@ -598,8 +679,7 @@ class _ValuationHintCard extends StatelessWidget {
           Expanded(
             child: Text(
               '$positionHint$cycleHint',
-              style: TextStyle(
-                  color: hintColor, fontSize: 12, height: 1.4),
+              style: TextStyle(color: hintColor, fontSize: 12, height: 1.4),
             ),
           ),
         ],
@@ -629,10 +709,7 @@ class _QuickRecordBar extends StatelessWidget {
           context,
           MaterialPageRoute(
             builder: (_) => AddHoldingBatchScreen(
-              stockContext: ctx.copyWith(
-                planBuyPrice: firstSlice.buyPrice,
-                planQuantity: firstSlice.quantity,
-              ),
+              stockContext: ctx,
             ),
           ),
         ),
@@ -644,8 +721,8 @@ class _QuickRecordBar extends StatelessWidget {
         style: ElevatedButton.styleFrom(
           backgroundColor: AppTheme.accent,
           foregroundColor: Colors.white,
-          shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12)),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         ),
       ),
     );
@@ -819,7 +896,8 @@ class _WeightModeSelector extends StatelessWidget {
                           : AppTheme.bgCardLight,
                       borderRadius: BorderRadius.circular(8),
                       border: Border.all(
-                        color: selected ? AppTheme.accent : AppTheme.borderColor,
+                        color:
+                            selected ? AppTheme.accent : AppTheme.borderColor,
                       ),
                     ),
                     child: Column(
@@ -827,9 +905,12 @@ class _WeightModeSelector extends StatelessWidget {
                         Text(
                           m.label,
                           style: TextStyle(
-                            color: selected ? AppTheme.accent : AppTheme.textSecondary,
+                            color: selected
+                                ? AppTheme.accent
+                                : AppTheme.textSecondary,
                             fontSize: 12,
-                            fontWeight: selected ? FontWeight.w700 : FontWeight.normal,
+                            fontWeight:
+                                selected ? FontWeight.w700 : FontWeight.normal,
                           ),
                         ),
                         Text(
@@ -1001,7 +1082,7 @@ class _PlanSummary extends StatelessWidget {
           Expanded(
             child: _Metric(
               label: '预计投入',
-              value: Formatters.largeNumber(totalCost),
+              value: Formatters.money(totalCost),
             ),
           ),
           Expanded(
@@ -1019,7 +1100,7 @@ class _PlanSummary extends StatelessWidget {
           Expanded(
             child: _Metric(
               label: '余留现金',
-              value: Formatters.largeNumber(idleCash),
+              value: Formatters.money(idleCash),
             ),
           ),
         ],
@@ -1072,7 +1153,7 @@ class _SeedSliceCard extends StatelessWidget {
               const SizedBox(width: 10),
               Expanded(
                 child: Text(
-                  '播种 ${Formatters.quantity(slice.quantity)}$unit @ ¥${Formatters.price(slice.buyPrice)}',
+                  '播种 ${Formatters.quantity(slice.quantity)}$unit，价格 ¥${Formatters.price(slice.buyPrice)}',
                   style: const TextStyle(
                     color: AppTheme.textPrimary,
                     fontSize: 15,
@@ -1081,7 +1162,7 @@ class _SeedSliceCard extends StatelessWidget {
                 ),
               ),
               Text(
-                Formatters.largeNumber(slice.cost),
+                Formatters.money(slice.cost),
                 style: const TextStyle(
                   color: AppTheme.accentGold,
                   fontWeight: FontWeight.w700,
@@ -1101,7 +1182,7 @@ class _SeedSliceCard extends StatelessWidget {
               ),
               Expanded(
                 child: _MiniLine(
-                  label: '策略建议提示',
+                  label: '策略建议提示（每手倍数）',
                   value: '${Formatters.quantity(slice.recoverQuantity)}$unit',
                   color: AppTheme.primaryGreen,
                 ),
@@ -1134,8 +1215,8 @@ class _SeedSliceCard extends StatelessWidget {
                 label: const Text('记录此批入账'),
                 style: OutlinedButton.styleFrom(
                   foregroundColor: AppTheme.accent,
-                  side: BorderSide(
-                      color: AppTheme.accent.withValues(alpha: 0.5)),
+                  side:
+                      BorderSide(color: AppTheme.accent.withValues(alpha: 0.5)),
                   padding: const EdgeInsets.symmetric(vertical: 8),
                   textStyle: const TextStyle(fontSize: 13),
                   shape: RoundedRectangleBorder(
@@ -1305,8 +1386,8 @@ class _Metric extends StatelessWidget {
         const SizedBox(height: 5),
         Text(
           value,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
+          maxLines: 2,
+          overflow: TextOverflow.visible,
           style: const TextStyle(
             color: AppTheme.textPrimary,
             fontSize: 13,
@@ -1419,7 +1500,8 @@ class _DcaIntroBand extends StatelessWidget {
         children: [
           Row(
             children: [
-              const Icon(Icons.calendar_today, color: AppTheme.accent, size: 18),
+              const Icon(Icons.calendar_today,
+                  color: AppTheme.accent, size: 18),
               const SizedBox(width: 8),
               Text(
                 ctx?.name != null ? '定投计划 · ${ctx!.name}' : '时间 + 价格双维度定投',
@@ -1434,7 +1516,8 @@ class _DcaIntroBand extends StatelessWidget {
           const SizedBox(height: 8),
           const Text(
             '时间维度：按设定周期触发买入；价格维度：开启后仅当价格低于上限时才执行，高于上限时跳过等下期。两维度结合，实现纪律性低价建仓。',
-            style: TextStyle(color: AppTheme.textSecondary, fontSize: 12, height: 1.45),
+            style: TextStyle(
+                color: AppTheme.textSecondary, fontSize: 12, height: 1.45),
           ),
         ],
       ),
@@ -1512,8 +1595,8 @@ class _DcaForm extends StatelessWidget {
               final selected = p == period;
               return Expanded(
                 child: Padding(
-                  padding: EdgeInsets.only(
-                      right: p != DcaPeriod.monthly ? 8 : 0),
+                  padding:
+                      EdgeInsets.only(right: p != DcaPeriod.monthly ? 8 : 0),
                   child: GestureDetector(
                     onTap: () => onPeriodChanged(p),
                     child: Container(
@@ -1537,9 +1620,8 @@ class _DcaForm extends StatelessWidget {
                               ? AppTheme.primaryGreen
                               : AppTheme.textSecondary,
                           fontSize: 13,
-                          fontWeight: selected
-                              ? FontWeight.w700
-                              : FontWeight.normal,
+                          fontWeight:
+                              selected ? FontWeight.w700 : FontWeight.normal,
                         ),
                       ),
                     ),
@@ -1584,8 +1666,7 @@ class _DcaForm extends StatelessWidget {
               const Expanded(
                 child: Text(
                   '启用价格上限（仅当价格低于设定值时执行）',
-                  style:
-                      TextStyle(color: AppTheme.textSecondary, fontSize: 12),
+                  style: TextStyle(color: AppTheme.textSecondary, fontSize: 12),
                 ),
               ),
             ],
@@ -1644,16 +1725,15 @@ class _DcaSummaryCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: AppTheme.bgCard,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-            color: AppTheme.primaryGreen.withValues(alpha: 0.35)),
+        border:
+            Border.all(color: AppTheme.primaryGreen.withValues(alpha: 0.35)),
       ),
       child: Row(
         children: [
           Expanded(child: _Metric(label: '总期数', value: '$sessions 期')),
           Expanded(
-              child: _Metric(
-                  label: '合计金额',
-                  value: Formatters.largeNumber(totalAmount))),
+              child:
+                  _Metric(label: '合计金额', value: Formatters.money(totalAmount))),
           Expanded(
             child: _Metric(
               label: '价格条件',
@@ -1743,7 +1823,7 @@ class _DcaSliceCard extends StatelessWidget {
                 ),
               ),
               Text(
-                Formatters.largeNumber(slice.amount),
+                Formatters.money(slice.amount),
                 style: const TextStyle(
                     color: AppTheme.primaryGreen,
                     fontSize: 15,
@@ -1760,8 +1840,8 @@ class _DcaSliceCard extends StatelessWidget {
                 const SizedBox(width: 5),
                 Text(
                   '涨至 ¥${Formatters.price(reboundPrice)} (+${(slice.reboundTarget * 100).toStringAsFixed(0)}%) 时触发回收提醒',
-                  style: const TextStyle(
-                      color: AppTheme.accentGold, fontSize: 11),
+                  style:
+                      const TextStyle(color: AppTheme.accentGold, fontSize: 11),
                 ),
               ],
             ),

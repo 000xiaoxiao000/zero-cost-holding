@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'screens/home_screen.dart';
 import 'screens/search_screen.dart';
@@ -42,6 +43,16 @@ class ZeroCostHoldingApp extends StatelessWidget {
       title: '零成本持仓助手',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.darkTheme,
+      locale: const Locale('zh', 'CN'),
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
+      supportedLocales: const [
+        Locale('zh', 'CN'),
+        Locale('en', 'US'),
+      ],
       home: const HomeScreen(key: ValueKey('home-screen-root')),
       routes: {
         '/search': (_) => const SearchScreen(),

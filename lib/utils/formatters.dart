@@ -7,8 +7,10 @@ class Formatters {
   static final _date = DateFormat('yyyy-MM-dd');
   static final _dateShort = DateFormat('MM/dd');
   static final _dateTime = DateFormat('MM-dd HH:mm');
+  static final _dateTimeFull = DateFormat('yyyy-MM-dd HH:mm');
 
   static String price(double v) => _price.format(v);
+  static String money(double v) => _large.format(v);
 
   static String quantity(double v) {
     if (v == v.roundToDouble()) {
@@ -30,6 +32,7 @@ class Formatters {
   static String date(DateTime d) => _date.format(d);
   static String dateShort(DateTime d) => _dateShort.format(d);
   static String dateTime(DateTime d) => _dateTime.format(d);
+  static String dateTimeFull(DateTime d) => _dateTimeFull.format(d);
 
   /// 格式化大数字（亿/万）
   static String largeNumber(double v) {

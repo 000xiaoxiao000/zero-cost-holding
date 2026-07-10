@@ -111,7 +111,7 @@ class _VaultHero extends StatelessWidget {
               Expanded(
                 child: _HeroMetric(
                   label: '已回收',
-                  value: Formatters.largeNumber(recovered),
+                  value: Formatters.money(recovered),
                 ),
               ),
             ],
@@ -201,7 +201,7 @@ class _VaultCard extends StatelessWidget {
               Expanded(
                 child: _MiniMetric(
                   label: '已收本金',
-                  value: Formatters.largeNumber(position.totalRecovered),
+                  value: Formatters.money(position.totalRecovered),
                 ),
               ),
               Expanded(
@@ -211,7 +211,7 @@ class _VaultCard extends StatelessWidget {
           ),
           const SizedBox(height: 10),
           Text(
-            '仓位回收 ${Formatters.largeNumber(position.totalSellRecovered)}，现金分红/派发 ${Formatters.largeNumber(position.totalCashIncome)}',
+            '仓位回收 ${Formatters.money(position.totalSellRecovered)}，现金分红/派发 ${Formatters.money(position.totalCashIncome)}',
             style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12),
           ),
         ],
@@ -238,8 +238,8 @@ class _HeroMetric extends StatelessWidget {
         const SizedBox(height: 4),
         Text(
           value,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
+          maxLines: 2,
+          overflow: TextOverflow.visible,
           style: const TextStyle(
             color: AppTheme.accentGold,
             fontSize: 15,
@@ -269,8 +269,8 @@ class _MiniMetric extends StatelessWidget {
         const SizedBox(height: 4),
         Text(
           value,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
+          maxLines: 2,
+          overflow: TextOverflow.visible,
           style: const TextStyle(
             color: AppTheme.textPrimary,
             fontSize: 13,

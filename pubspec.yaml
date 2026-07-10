@@ -9,6 +9,8 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  flutter_localizations:
+    sdk: flutter
 
   # 状态管理
   flutter_riverpod: ^2.6.1
@@ -35,7 +37,7 @@ dependencies:
   shared_preferences: ^2.2.2
 
   # 时间处理
-  intl: ^0.18.1
+  intl: ^0.20.2
 
   # UI组件
   cupertino_icons: ^1.0.6
