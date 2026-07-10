@@ -1,6 +1,4 @@
 import 'dart:async';
-import 'dart:math' as math;
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/services.dart';
@@ -716,7 +714,6 @@ class _HoldingCard extends ConsumerWidget {
           ...position.batches.map(
             (b) => _BatchRow(
               batch: b,
-              position: position,
             ),
           ),
           if (position.batches.isEmpty)
@@ -948,11 +945,9 @@ class _IdempotentIconButtonState extends State<_IdempotentIconButton> {
 
 class _BatchRow extends ConsumerWidget {
   final HoldingBatch batch;
-  final HoldingPosition position;
 
   const _BatchRow({
     required this.batch,
-    required this.position,
   });
 
   @override
@@ -970,9 +965,9 @@ class _BatchRow extends ConsumerWidget {
             ? AppTheme.textMuted
             : AppTheme.accent;
     final reminderStatuses = [
-      if (_recoverReminderStatus(ref, batch) case final status?) status,
-      if (_irrigationReminderStatus(ref, position, batch) case final status?)
-        status,
+      if (_planRecoverReminderStatus(ref, batch) case final status?) status,
+      if (_zeroCostReminderStatus(ref, batch) case final status?) status,
+      if (_irrigationReminderStatus(ref, batch) case final status?) status,
     ];
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -2012,20 +2007,20 @@ class _DialogField extends StatelessWidget {
   }
 }
 
-_ReminderStatus? _recoverReminderStatus(WidgetRef ref, HoldingBatch batch) {
+_ReminderStatus? _planRecoverReminderStatus(WidgetRef ref, HoldingBatch batch) {
   final price = batch.planRecoverPrice;
   if (price == null || price <= 0) return null;
   if (batch.isZeroCost) {
     return const _ReminderStatus(
       icon: Icons.check_circle_outline,
-      text: '回收提醒已停止：已零成本',
+      text: '播种回收提醒已停止：已零成本',
       color: AppTheme.accentGold,
     );
   }
   if (batch.remainingQuantity <= 0) {
     return const _ReminderStatus(
       icon: Icons.notifications_off_outlined,
-      text: '回收提醒已停止：无剩余仓位',
+      text: '播种回收提醒已停止：无剩余仓位',
       color: AppTheme.textMuted,
     );
   }
@@ -2036,7 +2031,7 @@ _ReminderStatus? _recoverReminderStatus(WidgetRef ref, HoldingBatch batch) {
   if (!batch.recoverAlertEnabled) {
     return _ReminderStatus(
       icon: Icons.notifications_off_outlined,
-      text: '回收提醒已关闭 ¥${Formatters.price(price)}',
+      text: '播种回收提醒已关闭 ¥${Formatters.price(price)}',
       color: AppTheme.textMuted,
       onTap: batch.id == null
           ? null
@@ -2050,7 +2045,7 @@ _ReminderStatus? _recoverReminderStatus(WidgetRef ref, HoldingBatch batch) {
   }
   return _ReminderStatus(
     icon: Icons.notifications_active_outlined,
-    text: '回收提醒 ¥${Formatters.price(price)}$quantityText',
+    text: '播种回收提醒 ¥${Formatters.price(price)}$quantityText',
     color: AppTheme.accentGold,
     onTap: batch.id == null
         ? null
@@ -2062,38 +2057,70 @@ _ReminderStatus? _recoverReminderStatus(WidgetRef ref, HoldingBatch batch) {
   );
 }
 
-_ReminderStatus? _irrigationReminderStatus(
-  WidgetRef ref,
-  HoldingPosition position,
-  HoldingBatch batch,
-) {
-  final plan = _IrrigationPlanView.fromBatch(batch);
-  if (plan == null) return null;
-
-  var maxRecordedIndex = plan.index;
-  for (final other in position.batches) {
-    final otherPlan = _IrrigationPlanView.fromBatch(other);
-    if (otherPlan == null || !plan.samePlan(otherPlan)) continue;
-    maxRecordedIndex = math.max(maxRecordedIndex, otherPlan.index);
-  }
-  if (batch.planBatchIndex != maxRecordedIndex) return null;
-
-  final nextIndex = maxRecordedIndex + 1;
-  if (nextIndex > plan.seedCount) {
+_ReminderStatus? _zeroCostReminderStatus(WidgetRef ref, HoldingBatch batch) {
+  final price = batch.zeroCostAlertPrice;
+  if (price == null || price <= 0) return null;
+  if (batch.isZeroCost) {
     return const _ReminderStatus(
       icon: Icons.check_circle_outline,
-      text: '灌溉提醒已停止：计划已完成',
+      text: '零成本收割提醒已停止：已零成本',
+      color: AppTheme.accentGold,
+    );
+  }
+  if (batch.remainingQuantity <= 0) {
+    return const _ReminderStatus(
+      icon: Icons.notifications_off_outlined,
+      text: '零成本收割提醒已停止：无剩余仓位',
       color: AppTheme.textMuted,
     );
   }
+  final quantity = batch.zeroCostAlertQuantity;
+  final quantityText = quantity != null && quantity > 0
+      ? ' · 计划 ${Formatters.quantity(quantity)}${batch.quantityUnit}'
+      : '';
+  if (!batch.zeroCostAlertEnabled) {
+    return _ReminderStatus(
+      icon: Icons.notifications_off_outlined,
+      text: '零成本收割提醒已关闭 ¥${Formatters.price(price)}',
+      color: AppTheme.textMuted,
+      onTap: batch.id == null
+          ? null
+          : () => ref
+              .read(holdingPositionsProvider.notifier)
+              .updateBatchAlertToggles(
+                batch.id!,
+                zeroCostAlertEnabled: true,
+              ),
+    );
+  }
+  return _ReminderStatus(
+    icon: Icons.notifications_active_outlined,
+    text: '零成本收割提醒 ¥${Formatters.price(price)}$quantityText',
+    color: AppTheme.accentGold,
+    onTap: batch.id == null
+        ? null
+        : () =>
+            ref.read(holdingPositionsProvider.notifier).updateBatchAlertToggles(
+                  batch.id!,
+                  zeroCostAlertEnabled: false,
+                ),
+  );
+}
 
-  final nextPrice =
-      plan.startPrice * math.pow(1 - plan.dropStepPct / 100, nextIndex - 1);
-  if (nextPrice <= 0) return null;
-  final label = '第 $nextIndex 批 ¥${Formatters.price(nextPrice.toDouble())}';
+_ReminderStatus? _irrigationReminderStatus(
+  WidgetRef ref,
+  HoldingBatch batch,
+) {
+  final price = batch.irrigationAlertPrice;
+  if (price == null || price <= 0) return null;
+  final quantity = batch.irrigationAlertQuantity;
+  final quantityText = quantity != null && quantity > 0
+      ? ' · 计划 ${Formatters.quantity(quantity)}${batch.quantityUnit}'
+      : '';
+  final label = '¥${Formatters.price(price)}$quantityText';
   if (!batch.irrigationAlertEnabled) {
     return _ReminderStatus(
-      icon: Icons.water_drop_outlined,
+      icon: Icons.notifications_off_outlined,
       text: '灌溉提醒已关闭 $label',
       color: AppTheme.textMuted,
       onTap: batch.id == null
@@ -2107,7 +2134,7 @@ _ReminderStatus? _irrigationReminderStatus(
     );
   }
   return _ReminderStatus(
-    icon: Icons.water_drop_outlined,
+    icon: Icons.notifications_active_outlined,
     text: '灌溉提醒 $label',
     color: AppTheme.accent,
     onTap: batch.id == null
@@ -2118,62 +2145,6 @@ _ReminderStatus? _irrigationReminderStatus(
                   irrigationAlertEnabled: false,
                 ),
   );
-}
-
-class _IrrigationPlanView {
-  final String assetType;
-  final String market;
-  final String stockCode;
-  final double startPrice;
-  final int seedCount;
-  final double dropStepPct;
-  final int index;
-
-  const _IrrigationPlanView({
-    required this.assetType,
-    required this.market,
-    required this.stockCode,
-    required this.startPrice,
-    required this.seedCount,
-    required this.dropStepPct,
-    required this.index,
-  });
-
-  static _IrrigationPlanView? fromBatch(HoldingBatch batch) {
-    final startPrice = batch.planStartPrice;
-    final seedCount = batch.planSeedCount;
-    final dropStepPct = batch.planDropStep;
-    final index = batch.planBatchIndex;
-    if (startPrice == null ||
-        startPrice <= 0 ||
-        seedCount == null ||
-        seedCount <= 0 ||
-        dropStepPct == null ||
-        dropStepPct <= 0 ||
-        dropStepPct >= 100 ||
-        index == null ||
-        index <= 0) {
-      return null;
-    }
-    return _IrrigationPlanView(
-      assetType: batch.assetType,
-      market: batch.market,
-      stockCode: batch.stockCode,
-      startPrice: startPrice,
-      seedCount: seedCount,
-      dropStepPct: dropStepPct,
-      index: index,
-    );
-  }
-
-  bool samePlan(_IrrigationPlanView other) {
-    return assetType == other.assetType &&
-        market == other.market &&
-        stockCode == other.stockCode &&
-        seedCount == other.seedCount &&
-        (startPrice - other.startPrice).abs() <= 0.0001 &&
-        (dropStepPct - other.dropStepPct).abs() <= 0.0001;
-  }
 }
 
 class _ReminderStatus {

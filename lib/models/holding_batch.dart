@@ -20,7 +20,12 @@ class HoldingBatch {
   final double? planCommission;
   final String? planWeightModeKey;
   final int? planBatchIndex;
+  final double? zeroCostAlertPrice;
+  final double? zeroCostAlertQuantity;
+  final double? irrigationAlertPrice;
+  final double? irrigationAlertQuantity;
   final bool recoverAlertEnabled;
+  final bool zeroCostAlertEnabled;
   final bool irrigationAlertEnabled;
   final double cashIncome;
   double? sellPrice;
@@ -48,7 +53,12 @@ class HoldingBatch {
     this.planCommission,
     this.planWeightModeKey,
     this.planBatchIndex,
+    this.zeroCostAlertPrice,
+    this.zeroCostAlertQuantity,
+    this.irrigationAlertPrice,
+    this.irrigationAlertQuantity,
     this.recoverAlertEnabled = true,
+    this.zeroCostAlertEnabled = true,
     this.irrigationAlertEnabled = true,
     this.cashIncome = 0.0,
     this.sellPrice,
@@ -134,7 +144,12 @@ class HoldingBatch {
       'plan_commission': planCommission,
       'plan_weight_mode': planWeightModeKey,
       'plan_batch_index': planBatchIndex,
+      'zero_cost_alert_price': zeroCostAlertPrice,
+      'zero_cost_alert_quantity': zeroCostAlertQuantity,
+      'irrigation_alert_price': irrigationAlertPrice,
+      'irrigation_alert_quantity': irrigationAlertQuantity,
       'recover_alert_enabled': recoverAlertEnabled ? 1 : 0,
+      'zero_cost_alert_enabled': zeroCostAlertEnabled ? 1 : 0,
       'irrigation_alert_enabled': irrigationAlertEnabled ? 1 : 0,
       'cash_income': cashIncome,
       'sell_price': sellPrice,
@@ -165,7 +180,12 @@ class HoldingBatch {
       planCommission: map['plan_commission']?.toDouble(),
       planWeightModeKey: map['plan_weight_mode'],
       planBatchIndex: map['plan_batch_index'],
+      zeroCostAlertPrice: map['zero_cost_alert_price']?.toDouble(),
+      zeroCostAlertQuantity: map['zero_cost_alert_quantity']?.toDouble(),
+      irrigationAlertPrice: map['irrigation_alert_price']?.toDouble(),
+      irrigationAlertQuantity: map['irrigation_alert_quantity']?.toDouble(),
       recoverAlertEnabled: (map['recover_alert_enabled'] ?? 1) != 0,
+      zeroCostAlertEnabled: (map['zero_cost_alert_enabled'] ?? 1) != 0,
       irrigationAlertEnabled: (map['irrigation_alert_enabled'] ?? 1) != 0,
       cashIncome: (map['cash_income'] ?? 0.0).toDouble(),
       sellPrice: map['sell_price']?.toDouble(),
@@ -183,6 +203,7 @@ class HoldingBatch {
     String? note,
     double? cashIncome,
     bool? recoverAlertEnabled,
+    bool? zeroCostAlertEnabled,
     bool? irrigationAlertEnabled,
   }) {
     return HoldingBatch(
@@ -206,7 +227,12 @@ class HoldingBatch {
       planCommission: planCommission,
       planWeightModeKey: planWeightModeKey,
       planBatchIndex: planBatchIndex,
+      zeroCostAlertPrice: zeroCostAlertPrice,
+      zeroCostAlertQuantity: zeroCostAlertQuantity,
+      irrigationAlertPrice: irrigationAlertPrice,
+      irrigationAlertQuantity: irrigationAlertQuantity,
       recoverAlertEnabled: recoverAlertEnabled ?? this.recoverAlertEnabled,
+      zeroCostAlertEnabled: zeroCostAlertEnabled ?? this.zeroCostAlertEnabled,
       irrigationAlertEnabled:
           irrigationAlertEnabled ?? this.irrigationAlertEnabled,
       cashIncome: cashIncome ?? this.cashIncome,

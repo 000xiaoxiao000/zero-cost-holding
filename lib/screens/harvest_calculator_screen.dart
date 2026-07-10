@@ -272,6 +272,10 @@ class _HarvestCalculatorScreenState
       quantity: plan.suggestedBuyQty,
       buyDate: DateTime.now(),
       note: '来自收割计算：灌溉低吸',
+      zeroCostAlertPrice: plan.upperPrice,
+      zeroCostAlertQuantity: plan.zeroCostSellQty,
+      irrigationAlertPrice: plan.lowerPrice,
+      irrigationAlertQuantity: plan.suggestedBuyQty,
     );
     await ref.read(holdingPositionsProvider.notifier).addBatch(batch);
     if (!mounted) return;

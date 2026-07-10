@@ -84,11 +84,15 @@ class HoldingPositionsNotifier
   Future<void> updateBatchAlertToggles(
     int batchId, {
     bool? recoverAlertEnabled,
+    bool? zeroCostAlertEnabled,
     bool? irrigationAlertEnabled,
   }) async {
     final data = <String, dynamic>{};
     if (recoverAlertEnabled != null) {
       data['recover_alert_enabled'] = recoverAlertEnabled ? 1 : 0;
+    }
+    if (zeroCostAlertEnabled != null) {
+      data['zero_cost_alert_enabled'] = zeroCostAlertEnabled ? 1 : 0;
     }
     if (irrigationAlertEnabled != null) {
       data['irrigation_alert_enabled'] = irrigationAlertEnabled ? 1 : 0;

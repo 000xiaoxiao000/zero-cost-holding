@@ -126,6 +126,38 @@ class NotificationService {
     _lastNotified[key] = _NotifyRecord(type: 'recover', time: now);
   }
 
+  /// 检查收割计算保存的零成本收割提示，并在触及价位时提醒。
+  Future<void> checkZeroCostAndNotify({
+    required String code,
+    required String name,
+    required int batchId,
+    required double price,
+    required double triggerPrice,
+    double? sellQuantity,
+    String quantityUnit = '股',
+  }) async {
+    if (!_initialized || price <= 0 || triggerPrice <= 0) return;
+    if (price < triggerPrice) return;
+
+    final key = 'zero-cost:$batchId';
+    final record = _lastNotified[key];
+    final now = DateTime.now();
+    if (!_canNotify(record, 'zero-cost', now)) return;
+
+    final quantityText = sellQuantity != null && sellQuantity > 0
+        ? '，计划收割 ${_formatQuantity(sellQuantity)}$quantityUnit'
+        : '';
+    await _send(
+      id: key.hashCode & 0x7FFFFFFF,
+      title: '零成本收割 · $name',
+      body:
+          '现价 ¥${price.toStringAsFixed(3)} 已达到零成本收割触发价 ¥${triggerPrice.toStringAsFixed(3)}$quantityText，可检查收割计划',
+      channelId: 'zero_cost',
+      channelName: '零成本收割提醒',
+    );
+    _lastNotified[key] = _NotifyRecord(type: 'zero-cost', time: now);
+  }
+
   /// 检查播种计划下一档，并在触及灌溉价时提醒低吸检查。
   Future<void> checkIrrigationAndNotify({
     required String code,
@@ -143,11 +175,12 @@ class NotificationService {
     final now = DateTime.now();
     if (!_canNotify(record, 'irrigation', now)) return;
 
+    final batchText = batchIndex > 0 ? '第 $batchIndex 批' : '本次';
     await _send(
       id: key.hashCode & 0x7FFFFFFF,
       title: '灌溉提醒 · $name',
       body:
-          '现价 ¥${price.toStringAsFixed(3)} 已达到第 $batchIndex 批灌溉价 ¥${irrigationPrice.toStringAsFixed(3)}，可检查播种计划',
+          '现价 ¥${price.toStringAsFixed(3)} 已达到$batchText灌溉价 ¥${irrigationPrice.toStringAsFixed(3)}，可检查播种计划',
       channelId: 'irrigation',
       channelName: '灌溉低吸提醒',
     );

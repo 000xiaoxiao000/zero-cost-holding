@@ -8,6 +8,7 @@ class Watchlist {
   final String? note;
   double? targetPrice;
   double? alertPrice;
+  bool alertsEnabled;
 
   Watchlist({
     this.id,
@@ -18,6 +19,7 @@ class Watchlist {
     this.note,
     this.targetPrice,
     this.alertPrice,
+    this.alertsEnabled = true,
   }) : addedAt = addedAt ?? DateTime.now();
 
   Map<String, dynamic> toMap() {
@@ -30,6 +32,7 @@ class Watchlist {
       'note': note,
       'target_price': targetPrice,
       'alert_price': alertPrice,
+      'alerts_enabled': alertsEnabled ? 1 : 0,
     };
   }
 
@@ -43,6 +46,7 @@ class Watchlist {
       note: map['note'],
       targetPrice: map['target_price']?.toDouble(),
       alertPrice: map['alert_price']?.toDouble(),
+      alertsEnabled: (map['alerts_enabled'] ?? 1) != 0,
     );
   }
 }

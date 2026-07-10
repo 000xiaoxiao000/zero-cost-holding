@@ -106,7 +106,7 @@ class _AlertEditorDialogState extends ConsumerState<_AlertEditorDialog> {
             decoration: const InputDecoration(
               labelText: '目标价',
               hintText: '涨到此价格提醒收割',
-              prefixIcon: Icon(Icons.flag_outlined),
+              prefixIcon: Icon(Icons.notifications_active_outlined),
             ),
           ),
           const SizedBox(height: 12),
@@ -116,7 +116,7 @@ class _AlertEditorDialogState extends ConsumerState<_AlertEditorDialog> {
             decoration: const InputDecoration(
               labelText: '警戒价',
               hintText: '跌到此价格提醒关注',
-              prefixIcon: Icon(Icons.warning_amber_outlined),
+              prefixIcon: Icon(Icons.notifications_active_outlined),
             ),
           ),
           if (_errorText != null) ...[
@@ -218,12 +218,22 @@ class _WatchlistList extends ConsumerWidget {
       itemBuilder: (_, i) {
         final item = watchlist[i];
         final stock = quotes[item.stockCode];
+        final hasAlerts = item.targetPrice != null || item.alertPrice != null;
         return _WatchlistTile(
           item: item,
           stock: stock,
           isLoading: isLoading,
           onRemove: () =>
               ref.read(watchlistProvider.notifier).remove(item.stockCode),
+          onToggleAlerts: () {
+            if (hasAlerts && item.id != null) {
+              ref
+                  .read(watchlistProvider.notifier)
+                  .updateAlertsEnabled(item.id!, !item.alertsEnabled);
+              return;
+            }
+            _showAlertEditor(context, ref, item);
+          },
           onEditAlerts: () => _showAlertEditor(context, ref, item),
           onTap: () => Navigator.push(
             context,
@@ -246,6 +256,7 @@ class _WatchlistTile extends StatelessWidget {
   final Stock? stock;
   final bool isLoading;
   final VoidCallback onRemove;
+  final VoidCallback onToggleAlerts;
   final VoidCallback onEditAlerts;
   final VoidCallback onTap;
 
@@ -254,6 +265,7 @@ class _WatchlistTile extends StatelessWidget {
     required this.stock,
     required this.isLoading,
     required this.onRemove,
+    required this.onToggleAlerts,
     required this.onEditAlerts,
     required this.onTap,
   });
@@ -264,6 +276,8 @@ class _WatchlistTile extends StatelessWidget {
     final pct = stock?.changePercent ?? 0.0;
     final priceColor = pct >= 0 ? AppTheme.accentGold : AppTheme.primaryGreen;
     final hasAlerts = item.targetPrice != null || item.alertPrice != null;
+    final alertColor =
+        item.alertsEnabled ? AppTheme.accentGold : AppTheme.textMuted;
 
     return Dismissible(
       key: Key(item.stockCode),
@@ -315,17 +329,27 @@ class _WatchlistTile extends StatelessWidget {
                                     color: AppTheme.textMuted, fontSize: 11)),
                             if (item.targetPrice != null)
                               _AlertChip(
-                                icon: Icons.flag_outlined,
+                                icon: item.alertsEnabled
+                                    ? Icons.notifications_active_outlined
+                                    : Icons.notifications_off_outlined,
                                 label:
                                     '目标 ¥${Formatters.price(item.targetPrice!)}',
-                                color: AppTheme.accentGold,
+                                color: item.alertsEnabled
+                                    ? AppTheme.accentGold
+                                    : AppTheme.textMuted,
+                                onTap: onEditAlerts,
                               ),
                             if (item.alertPrice != null)
                               _AlertChip(
-                                icon: Icons.warning_amber_outlined,
+                                icon: item.alertsEnabled
+                                    ? Icons.notifications_active_outlined
+                                    : Icons.notifications_off_outlined,
                                 label:
                                     '警戒 ¥${Formatters.price(item.alertPrice!)}',
-                                color: AppTheme.riskRed,
+                                color: item.alertsEnabled
+                                    ? AppTheme.riskRed
+                                    : AppTheme.textMuted,
+                                onTap: onEditAlerts,
                               ),
                           ],
                         ),
@@ -336,13 +360,14 @@ class _WatchlistTile extends StatelessWidget {
                     tooltip: '设置提醒',
                     icon: Icon(
                       hasAlerts
-                          ? Icons.notifications_active
+                          ? item.alertsEnabled
+                              ? Icons.notifications_active
+                              : Icons.notifications_off_outlined
                           : Icons.notifications_none_outlined,
-                      color:
-                          hasAlerts ? AppTheme.accentGold : AppTheme.textMuted,
+                      color: hasAlerts ? alertColor : AppTheme.textMuted,
                       size: 21,
                     ),
-                    onPressed: onEditAlerts,
+                    onPressed: onToggleAlerts,
                   ),
                   if (isLoading)
                     Container(
@@ -397,16 +422,18 @@ class _AlertChip extends StatelessWidget {
   final IconData icon;
   final String label;
   final Color color;
+  final VoidCallback? onTap;
 
   const _AlertChip({
     required this.icon,
     required this.label,
     required this.color,
+    this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    final chip = Container(
       constraints: const BoxConstraints(maxWidth: 130),
       padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
       decoration: BoxDecoration(
@@ -432,6 +459,12 @@ class _AlertChip extends StatelessWidget {
           ),
         ],
       ),
+    );
+    if (onTap == null) return chip;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(6),
+      child: chip,
     );
   }
 }

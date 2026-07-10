@@ -1,7 +1,5 @@
 import 'dart:async';
 import 'dart:developer' as dev;
-import 'dart:math' as math;
-
 import '../models/holding_batch.dart';
 import '../models/watchlist.dart';
 import '../services/notification_service.dart';
@@ -82,8 +80,8 @@ class AlertPollingService {
 
   Future<void> _pollWatchlist() async {
     final list = _watchlistGetter?.call() ?? const <Watchlist>[];
-    final alertItems =
-        list.where((w) => w.targetPrice != null || w.alertPrice != null);
+    final alertItems = list.where((w) =>
+        w.alertsEnabled && (w.targetPrice != null || w.alertPrice != null));
     if (alertItems.isEmpty) return;
 
     dev.log('轮询 ${alertItems.length} 只自选股价格提醒', name: 'AlertPollingService');
@@ -112,7 +110,8 @@ class AlertPollingService {
     final alertPositions = positions.where(
       (position) =>
           position.batches.any(_needsRecoverAlert) ||
-          _nextIrrigationAlert(position) != null,
+          position.batches.any(_needsZeroCostAlert) ||
+          position.batches.any(_needsIrrigationAlert),
     );
     if (alertPositions.isEmpty) return;
 
@@ -136,15 +135,26 @@ class AlertPollingService {
           );
         }
 
-        final irrigation = _nextIrrigationAlert(position);
-        if (irrigation != null) {
-          await NotificationService().checkIrrigationAndNotify(
-            code: position.stockCode,
-            name: position.stockName,
-            planKey: irrigation.planKey,
-            batchIndex: irrigation.batchIndex,
+        for (final batch in position.batches.where(_needsZeroCostAlert)) {
+          await NotificationService().checkZeroCostAndNotify(
+            code: batch.stockCode,
+            name: batch.stockName,
+            batchId: batch.id!,
             price: stock.price,
-            irrigationPrice: irrigation.price,
+            triggerPrice: batch.zeroCostAlertPrice!,
+            sellQuantity: batch.zeroCostAlertQuantity,
+            quantityUnit: batch.quantityUnit,
+          );
+        }
+
+        for (final batch in position.batches.where(_needsIrrigationAlert)) {
+          await NotificationService().checkIrrigationAndNotify(
+            code: batch.stockCode,
+            name: batch.stockName,
+            planKey: 'batch:${batch.id}',
+            batchIndex: batch.planBatchIndex ?? 0,
+            price: stock.price,
+            irrigationPrice: batch.irrigationAlertPrice!,
           );
         }
       } catch (e) {
@@ -164,40 +174,29 @@ class AlertPollingService {
         !batch.isZeroCost;
   }
 
-  _IrrigationAlert? _nextIrrigationAlert(HoldingPosition position) {
-    final plans = <String, _IrrigationPlan>{};
-    for (final batch in position.batches) {
-      final plan = _IrrigationPlan.fromBatch(batch);
-      if (plan == null) continue;
-      final existing = plans[plan.key];
-      if (existing == null ||
-          plan.maxRecordedIndex > existing.maxRecordedIndex) {
-        plans[plan.key] = plan;
-      }
-    }
-    if (plans.isEmpty) return null;
+  bool _needsZeroCostAlert(HoldingBatch batch) {
+    final price = batch.zeroCostAlertPrice;
+    return batch.id != null &&
+        batch.zeroCostAlertEnabled &&
+        price != null &&
+        price > 0 &&
+        batch.remainingQuantity > 0 &&
+        !batch.isZeroCost;
+  }
 
-    _IrrigationAlert? next;
-    for (final plan in plans.values) {
-      if (!plan.enabled) continue;
-      final nextIndex = plan.maxRecordedIndex + 1;
-      if (nextIndex > plan.seedCount) continue;
-      final price =
-          plan.startPrice * math.pow(1 - plan.dropStepPct / 100, nextIndex - 1);
-      if (price <= 0) continue;
-      final alert = _IrrigationAlert(
-        planKey: plan.key,
-        batchIndex: nextIndex,
-        price: price.toDouble(),
-      );
-      if (next == null || alert.price > next.price) next = alert;
-    }
-    return next;
+  bool _needsIrrigationAlert(HoldingBatch batch) {
+    final price = batch.irrigationAlertPrice;
+    return batch.id != null &&
+        batch.irrigationAlertEnabled &&
+        price != null &&
+        price > 0 &&
+        batch.remainingQuantity > 0;
   }
 
   bool needsHoldingAlert(HoldingPosition position) {
     return position.batches.any(_needsRecoverAlert) ||
-        _nextIrrigationAlert(position) != null;
+        position.batches.any(_needsZeroCostAlert) ||
+        position.batches.any(_needsIrrigationAlert);
   }
 
   /// 是否在交易时段（09:25 ~ 15:05，含集合竞价，周一至周五）
@@ -210,61 +209,4 @@ class AlertPollingService {
     // 09:25 = 565, 15:05 = 905
     return minutes >= 565 && minutes <= 905;
   }
-}
-
-class _IrrigationPlan {
-  final String key;
-  final double startPrice;
-  final int seedCount;
-  final double dropStepPct;
-  final int maxRecordedIndex;
-  final bool enabled;
-
-  const _IrrigationPlan({
-    required this.key,
-    required this.startPrice,
-    required this.seedCount,
-    required this.dropStepPct,
-    required this.maxRecordedIndex,
-    required this.enabled,
-  });
-
-  static _IrrigationPlan? fromBatch(HoldingBatch batch) {
-    final startPrice = batch.planStartPrice;
-    final seedCount = batch.planSeedCount;
-    final dropStepPct = batch.planDropStep;
-    final index = batch.planBatchIndex;
-    if (startPrice == null ||
-        startPrice <= 0 ||
-        seedCount == null ||
-        seedCount <= 0 ||
-        dropStepPct == null ||
-        dropStepPct <= 0 ||
-        dropStepPct >= 100 ||
-        index == null ||
-        index <= 0) {
-      return null;
-    }
-    return _IrrigationPlan(
-      key:
-          '${batch.assetType}:${batch.market}:${batch.stockCode}:${startPrice.toStringAsFixed(4)}:${seedCount}:${dropStepPct.toStringAsFixed(4)}',
-      startPrice: startPrice,
-      seedCount: seedCount,
-      dropStepPct: dropStepPct,
-      maxRecordedIndex: index,
-      enabled: batch.irrigationAlertEnabled,
-    );
-  }
-}
-
-class _IrrigationAlert {
-  final String planKey;
-  final int batchIndex;
-  final double price;
-
-  const _IrrigationAlert({
-    required this.planKey,
-    required this.batchIndex,
-    required this.price,
-  });
 }

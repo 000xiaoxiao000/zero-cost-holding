@@ -41,12 +41,17 @@ class WatchlistNotifier extends StateNotifier<List<Watchlist>> {
     await load();
   }
 
+  Future<void> updateAlertsEnabled(int id, bool enabled) async {
+    await _db.updateWatchlistItem(id, {'alerts_enabled': enabled ? 1 : 0});
+    await load();
+  }
+
   bool contains(String code) => state.any((w) => w.stockCode == code);
 
   /// 有任意一只股票设置了目标价或警戒价时启动后台轮询
   void _syncPolling() {
-    final hasAlerts =
-        state.any((w) => w.targetPrice != null || w.alertPrice != null);
+    final hasAlerts = state.any((w) =>
+        w.alertsEnabled && (w.targetPrice != null || w.alertPrice != null));
     final polling = AlertPollingService();
     if (hasAlerts) {
       polling.updateWatchlist(watchlistGetter: () => state);
@@ -69,6 +74,7 @@ final watchlistQuotesProvider =
   final quotes = await StockApiService().fetchBatchQuotes(watchlist);
 
   for (final item in watchlist) {
+    if (!item.alertsEnabled) continue;
     final stock = quotes[item.stockCode];
     if (stock == null || stock.price <= 0) continue;
     await NotificationService().checkAndNotify(
