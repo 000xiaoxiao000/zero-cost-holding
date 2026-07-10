@@ -1,10 +1,13 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/services.dart';
 
+import '../models/holding_batch.dart';
 import '../models/stock_context.dart';
 import '../navigation/app_navigation.dart';
+import '../providers/holding_providers.dart';
 import '../screens/add_holding_batch_screen.dart';
 import '../theme/app_theme.dart';
 import '../utils/formatters.dart';
@@ -82,16 +85,16 @@ extension DcaPeriodLabel on DcaPeriod {
 
 // ── SeedPlanScreen ──────────────────────────────────────────────────────────────
 
-class SeedPlanScreen extends StatefulWidget {
+class SeedPlanScreen extends ConsumerStatefulWidget {
   final StockContext? stockContext;
 
   const SeedPlanScreen({super.key, this.stockContext});
 
   @override
-  State<SeedPlanScreen> createState() => _SeedPlanScreenState();
+  ConsumerState<SeedPlanScreen> createState() => _SeedPlanScreenState();
 }
 
-class _SeedPlanScreenState extends State<SeedPlanScreen>
+class _SeedPlanScreenState extends ConsumerState<SeedPlanScreen>
     with SingleTickerProviderStateMixin {
   // ── Tab controller（播种计划 / 定投模式）
   late final TabController _tabController;
@@ -120,6 +123,9 @@ class _SeedPlanScreenState extends State<SeedPlanScreen>
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      ref.read(holdingPositionsProvider.notifier).load();
+    });
     _tabController = TabController(length: 2, vsync: this);
     final ctx = widget.stockContext;
     _assetType = ctx?.assetType ?? 'stock';
@@ -435,12 +441,18 @@ StockContext _withPlanSnapshot({
     planRebound: reboundPct,
     planCommission: commission,
     planWeightModeKey: weightMode.key,
+    planBatchIndex: slice.index,
   );
+}
+
+bool _near(double? a, double? b, {double tolerance = 0.01}) {
+  if (a == null || b == null) return false;
+  return (a - b).abs() <= tolerance;
 }
 
 // ── 分批播种 Tab ────────────────────────────────────────────────────────────────
 
-class _SeedPlanTab extends StatelessWidget {
+class _SeedPlanTab extends ConsumerWidget {
   final StockContext? ctx;
   final bool isFund;
   final List<_SeedSlice> plan;
@@ -478,7 +490,8 @@ class _SeedPlanTab extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final holdingMap = ref.watch(holdingPositionsProvider);
     final totalCost = plan.fold(0.0, (sum, s) => sum + s.cost);
     final totalQuantity = plan.fold(0.0, (sum, s) => sum + s.quantity);
     final freeQuantity = plan.fold(0.0, (sum, s) => sum + s.freeQuantity);
@@ -494,6 +507,26 @@ class _SeedPlanTab extends StatelessWidget {
           commission: slice.commission,
           weightMode: weightMode,
         );
+    HoldingBatch? recordedBatchFor(_SeedSlice slice) {
+      if (ctx == null) return null;
+      final key = '${assetType}:${ctx!.market ?? 'SH'}:${ctx!.code ?? ''}';
+      final batches = holdingMap[key] ?? const [];
+      for (final batch in batches) {
+        if (batch.planBatchIndex == slice.index) return batch;
+      }
+      for (final batch in batches) {
+        final samePlan = batch.planBatchIndex == null &&
+            _near(batch.buyPrice, slice.buyPrice) &&
+            _near(batch.quantity, slice.quantity) &&
+            _near(batch.planRecoverPrice, slice.targetPrice) &&
+            _near(batch.planRecoverQuantity, slice.recoverQuantity) &&
+            _near(batch.planCapital, capital) &&
+            batch.planSeedCount ==
+                (int.tryParse(seedCountController.text) ?? plan.length);
+        if (samePlan) return batch;
+      }
+      return null;
+    }
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 88),
@@ -548,6 +581,7 @@ class _SeedPlanTab extends StatelessWidget {
                 child: _SeedSliceCard(
                   slice: slice,
                   unit: unit,
+                  recordedBatch: recordedBatchFor(slice),
                   onRecord: ctx == null
                       ? null
                       : () => Navigator.push(
@@ -557,7 +591,9 @@ class _SeedPlanTab extends StatelessWidget {
                                 stockContext: planContext(slice),
                               ),
                             ),
-                          ),
+                          ).then((_) => ref
+                              .read(holdingPositionsProvider.notifier)
+                              .load()),
                 ),
               )),
         const SizedBox(height: 12),
@@ -566,6 +602,7 @@ class _SeedPlanTab extends StatelessWidget {
             ctx: planContext(plan.first),
             firstSlice: plan.first,
             isFund: isFund,
+            recordedBatch: recordedBatchFor(plan.first),
           ),
         if (plan.isNotEmpty && ctx != null) const SizedBox(height: 12),
         const _RiskRules(),
@@ -770,38 +807,85 @@ class _QuickRecordBar extends StatelessWidget {
   final StockContext ctx;
   final _SeedSlice firstSlice;
   final bool isFund;
+  final HoldingBatch? recordedBatch;
 
   const _QuickRecordBar({
     required this.ctx,
     required this.firstSlice,
     required this.isFund,
+    required this.recordedBatch,
   });
 
   @override
   Widget build(BuildContext context) {
+    final recorded = recordedBatch != null;
     return SizedBox(
       width: double.infinity,
       height: 50,
       child: ElevatedButton.icon(
-        onPressed: () => Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (_) => AddHoldingBatchScreen(
-              stockContext: ctx,
-            ),
-          ),
+        onPressed: recorded
+            ? () => AppNavigation.goHomeTab(context, HomeTab.holding)
+            : () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => AddHoldingBatchScreen(
+                      stockContext: ctx,
+                    ),
+                  ),
+                ),
+        icon: Icon(
+          recorded ? Icons.fact_check_outlined : Icons.add_circle_outline,
+          size: 18,
         ),
-        icon: const Icon(Icons.add_circle_outline, size: 18),
         label: Text(
-          '记录第一批入账  ¥${Formatters.price(firstSlice.buyPrice)} · ${Formatters.quantity(firstSlice.quantity)}${isFund ? '份' : '股'}',
+          recorded
+              ? '第一批已入账  查看账本记录'
+              : '记录第一批入账  ¥${Formatters.price(firstSlice.buyPrice)} · ${Formatters.quantity(firstSlice.quantity)}${isFund ? '份' : '股'}',
           style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
         ),
         style: ElevatedButton.styleFrom(
-          backgroundColor: AppTheme.accent,
-          foregroundColor: Colors.white,
+          backgroundColor: recorded ? AppTheme.bgCardLight : AppTheme.accent,
+          foregroundColor: recorded ? AppTheme.accent : Colors.white,
           shape:
               RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          side: recorded
+              ? BorderSide(color: AppTheme.accent.withValues(alpha: 0.55))
+              : BorderSide.none,
         ),
+      ),
+    );
+  }
+}
+
+class _PlanRecordBadge extends StatelessWidget {
+  final HoldingBatch batch;
+
+  const _PlanRecordBadge({required this.batch});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: AppTheme.accent.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: AppTheme.accent.withValues(alpha: 0.35)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.check_circle_outline,
+              size: 13, color: AppTheme.accent),
+          const SizedBox(width: 4),
+          Text(
+            '已入账 ${Formatters.date(batch.buyDate)}',
+            style: const TextStyle(
+              color: AppTheme.accent,
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -1206,16 +1290,19 @@ class _PlanSummary extends StatelessWidget {
 class _SeedSliceCard extends StatelessWidget {
   final _SeedSlice slice;
   final String unit;
+  final HoldingBatch? recordedBatch;
   final VoidCallback? onRecord;
 
   const _SeedSliceCard({
     required this.slice,
     required this.unit,
+    required this.recordedBatch,
     this.onRecord,
   });
 
   @override
   Widget build(BuildContext context) {
+    final recorded = recordedBatch != null;
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
@@ -1246,13 +1333,22 @@ class _SeedSliceCard extends StatelessWidget {
               ),
               const SizedBox(width: 10),
               Expanded(
-                child: Text(
-                  '播种 ${Formatters.quantity(slice.quantity)}$unit，价格 ¥${Formatters.price(slice.buyPrice)}',
-                  style: const TextStyle(
-                    color: AppTheme.textPrimary,
-                    fontSize: 15,
-                    fontWeight: FontWeight.w600,
-                  ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '播种 ${Formatters.quantity(slice.quantity)}$unit，价格 ¥${Formatters.price(slice.buyPrice)}',
+                      style: const TextStyle(
+                        color: AppTheme.textPrimary,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    if (recorded) ...[
+                      const SizedBox(height: 6),
+                      _PlanRecordBadge(batch: recordedBatch!),
+                    ],
+                  ],
                 ),
               ),
               Column(
@@ -1325,9 +1421,16 @@ class _SeedSliceCard extends StatelessWidget {
             SizedBox(
               width: double.infinity,
               child: OutlinedButton.icon(
-                onPressed: onRecord,
-                icon: const Icon(Icons.add_circle_outline, size: 15),
-                label: const Text('记录此批入账'),
+                onPressed: recorded
+                    ? () => AppNavigation.goHomeTab(context, HomeTab.holding)
+                    : onRecord,
+                icon: Icon(
+                  recorded
+                      ? Icons.fact_check_outlined
+                      : Icons.add_circle_outline,
+                  size: 15,
+                ),
+                label: Text(recorded ? '查看账本记录' : '记录此批入账'),
                 style: OutlinedButton.styleFrom(
                   foregroundColor: AppTheme.accent,
                   side:

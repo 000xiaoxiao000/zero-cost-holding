@@ -181,6 +181,7 @@ class _AddHoldingBatchScreenState extends ConsumerState<AddHoldingBatchScreen> {
       planRebound: ctx?.planRebound,
       planCommission: ctx?.planCommission,
       planWeightModeKey: ctx?.planWeightModeKey,
+      planBatchIndex: ctx?.planBatchIndex,
     );
     await ref.read(holdingPositionsProvider.notifier).addBatch(batch);
     if (mounted) AppNavigation.goHomeTab(context, HomeTab.holding);

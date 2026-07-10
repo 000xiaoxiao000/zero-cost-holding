@@ -19,6 +19,7 @@ class HoldingBatch {
   final double? planRebound;
   final double? planCommission;
   final String? planWeightModeKey;
+  final int? planBatchIndex;
   final double cashIncome;
   double? sellPrice;
   double? sellQuantity;
@@ -44,6 +45,7 @@ class HoldingBatch {
     this.planRebound,
     this.planCommission,
     this.planWeightModeKey,
+    this.planBatchIndex,
     this.cashIncome = 0.0,
     this.sellPrice,
     this.sellQuantity,
@@ -65,7 +67,8 @@ class HoldingBatch {
       planDropStep != null ||
       planRebound != null ||
       planCommission != null ||
-      planWeightModeKey != null;
+      planWeightModeKey != null ||
+      planBatchIndex != null;
 
   String get assetTypeLabel => isFund ? '基金' : '股票';
 
@@ -126,6 +129,7 @@ class HoldingBatch {
       'plan_rebound': planRebound,
       'plan_commission': planCommission,
       'plan_weight_mode': planWeightModeKey,
+      'plan_batch_index': planBatchIndex,
       'cash_income': cashIncome,
       'sell_price': sellPrice,
       'sell_quantity': sellQuantity,
@@ -154,6 +158,7 @@ class HoldingBatch {
       planRebound: map['plan_rebound']?.toDouble(),
       planCommission: map['plan_commission']?.toDouble(),
       planWeightModeKey: map['plan_weight_mode'],
+      planBatchIndex: map['plan_batch_index'],
       cashIncome: (map['cash_income'] ?? 0.0).toDouble(),
       sellPrice: map['sell_price']?.toDouble(),
       sellQuantity: map['sell_quantity']?.toDouble(),
@@ -190,6 +195,7 @@ class HoldingBatch {
       planRebound: planRebound,
       planCommission: planCommission,
       planWeightModeKey: planWeightModeKey,
+      planBatchIndex: planBatchIndex,
       cashIncome: cashIncome ?? this.cashIncome,
       sellPrice: sellPrice ?? this.sellPrice,
       sellQuantity: sellQuantity ?? this.sellQuantity,

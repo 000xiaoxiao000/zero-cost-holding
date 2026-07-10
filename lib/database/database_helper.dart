@@ -18,7 +18,7 @@ class DatabaseHelper {
     final path = join(dbPath, 'stock_holding.db');
     return await openDatabase(
       path,
-      version: 8,
+      version: 9,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
       onOpen: _ensureSchema,
@@ -60,6 +60,7 @@ class DatabaseHelper {
         plan_rebound REAL,
         plan_commission REAL,
         plan_weight_mode TEXT,
+        plan_batch_index INTEGER,
         cash_income REAL DEFAULT 0.0,
         sell_price REAL,
         sell_quantity REAL,
@@ -120,6 +121,14 @@ class DatabaseHelper {
         definition: 'REAL',
       );
     }
+    if (oldVersion < 9) {
+      await _addColumnIfMissing(
+        db,
+        table: 'holding_batches',
+        column: 'plan_batch_index',
+        definition: 'INTEGER',
+      );
+    }
   }
 
   Future<void> _ensureSchema(Database db) async {
@@ -153,6 +162,12 @@ class DatabaseHelper {
       table: 'holding_batches',
       column: 'plan_recover_quantity',
       definition: 'REAL',
+    );
+    await _addColumnIfMissing(
+      db,
+      table: 'holding_batches',
+      column: 'plan_batch_index',
+      definition: 'INTEGER',
     );
   }
 
@@ -198,6 +213,12 @@ class DatabaseHelper {
       table: 'holding_batches',
       column: 'plan_weight_mode',
       definition: 'TEXT',
+    );
+    await _addColumnIfMissing(
+      db,
+      table: 'holding_batches',
+      column: 'plan_batch_index',
+      definition: 'INTEGER',
     );
   }
 

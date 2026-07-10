@@ -29,6 +29,7 @@ class StockContext {
   final double? planRebound;
   final double? planCommission;
   final String? planWeightModeKey;
+  final int? planBatchIndex;
 
   /// 来自排雷页策略顾问的算法推荐（跨页面预填计划参数）
   final String? seedAlgo; // 'pyramid' | 'grid' | 'dca' | 'equal'
@@ -63,6 +64,7 @@ class StockContext {
     this.planRebound,
     this.planCommission,
     this.planWeightModeKey,
+    this.planBatchIndex,
     this.seedAlgo,
     this.weightModeKey,
     this.harvestAlgo,
@@ -96,6 +98,7 @@ class StockContext {
     double? planRebound,
     double? planCommission,
     String? planWeightModeKey,
+    int? planBatchIndex,
     String? seedAlgo,
     String? weightModeKey,
     String? harvestAlgo,
@@ -128,6 +131,7 @@ class StockContext {
       planRebound: planRebound ?? this.planRebound,
       planCommission: planCommission ?? this.planCommission,
       planWeightModeKey: planWeightModeKey ?? this.planWeightModeKey,
+      planBatchIndex: planBatchIndex ?? this.planBatchIndex,
       seedAlgo: seedAlgo ?? this.seedAlgo,
       weightModeKey: weightModeKey ?? this.weightModeKey,
       harvestAlgo: harvestAlgo ?? this.harvestAlgo,

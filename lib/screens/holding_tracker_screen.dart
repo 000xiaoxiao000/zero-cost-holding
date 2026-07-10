@@ -792,6 +792,7 @@ class _FlowActionRow extends StatelessWidget {
       planRebound: planBatch?.planRebound,
       planCommission: planBatch?.planCommission,
       planWeightModeKey: planBatch?.planWeightModeKey,
+      planBatchIndex: planBatch?.planBatchIndex,
     );
   }
 
@@ -1044,6 +1045,12 @@ class _BatchRow extends ConsumerWidget {
                   style:
                       const TextStyle(color: AppTheme.textMuted, fontSize: 11),
                 ),
+                if (batch.planBatchIndex != null)
+                  Text(
+                    '来自播种计划第 ${batch.planBatchIndex} 批',
+                    style:
+                        const TextStyle(color: AppTheme.accent, fontSize: 11),
+                  ),
                 if (batch.remainingQuantity <= 0 && !batch.isZeroCost)
                   const Text(
                     '已无剩余数量但本金未回满，可点修正回收或记录现金派发。',
@@ -1054,6 +1061,13 @@ class _BatchRow extends ConsumerWidget {
           ),
           _BatchProgressBadge(progress: batch.zeroCostProgress),
           const SizedBox(width: 4),
+          _IdempotentIconButton(
+            tooltip: '查看计划批次',
+            enabled: batch.hasPlanSnapshot,
+            onPressed: () => _openPlanBatch(context, batch),
+            icon: Icons.grass_outlined,
+            color: AppTheme.accent,
+          ),
           _IdempotentIconButton(
             tooltip: recoverTooltip,
             enabled: canRecordRecover,
@@ -1076,6 +1090,35 @@ class _BatchRow extends ConsumerWidget {
             color: AppTheme.riskRed,
           ),
         ],
+      ),
+    );
+  }
+
+  void _openPlanBatch(BuildContext context, HoldingBatch batch) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => SeedPlanScreen(
+          stockContext: StockContext(
+            code: batch.stockCode,
+            name: batch.stockName,
+            market: batch.market,
+            assetType: batch.assetType,
+            currentPrice: batch.planStartPrice ?? batch.buyPrice,
+            planBuyPrice: batch.buyPrice,
+            planQuantity: batch.quantity,
+            planRecoverPrice: batch.planRecoverPrice,
+            planRecoverQuantity: batch.planRecoverQuantity,
+            planCapital: batch.planCapital,
+            planStartPrice: batch.planStartPrice,
+            planSeedCount: batch.planSeedCount,
+            planDropStep: batch.planDropStep,
+            planRebound: batch.planRebound,
+            planCommission: batch.planCommission,
+            planWeightModeKey: batch.planWeightModeKey,
+            planBatchIndex: batch.planBatchIndex,
+          ),
+        ),
       ),
     );
   }
