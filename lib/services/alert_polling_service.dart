@@ -206,20 +206,26 @@ class AlertPollingService {
 
   bool _needsZeroCostAlert(HoldingBatch batch) {
     final price = batch.zeroCostAlertPrice;
+    final quantity = batch.zeroCostAlertQuantity;
     return batch.id != null &&
         batch.zeroCostAlertEnabled &&
         price != null &&
         price > 0 &&
+        quantity != null &&
+        quantity > 0 &&
         batch.remainingQuantity > 0 &&
         !batch.isZeroCost;
   }
 
   bool _needsIrrigationAlert(HoldingBatch batch) {
     final price = batch.irrigationAlertPrice;
+    final quantity = batch.irrigationAlertQuantity;
     return batch.id != null &&
         batch.irrigationAlertEnabled &&
         price != null &&
         price > 0 &&
+        quantity != null &&
+        quantity > 0 &&
         batch.remainingQuantity > 0;
   }
 

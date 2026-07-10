@@ -2059,7 +2059,10 @@ _ReminderStatus? _planRecoverReminderStatus(WidgetRef ref, HoldingBatch batch) {
 
 _ReminderStatus? _zeroCostReminderStatus(WidgetRef ref, HoldingBatch batch) {
   final price = batch.zeroCostAlertPrice;
-  if (price == null || price <= 0) return null;
+  final quantity = batch.zeroCostAlertQuantity;
+  if (price == null || price <= 0 || quantity == null || quantity <= 0) {
+    return null;
+  }
   if (batch.isZeroCost) {
     return const _ReminderStatus(
       icon: Icons.check_circle_outline,
@@ -2074,10 +2077,8 @@ _ReminderStatus? _zeroCostReminderStatus(WidgetRef ref, HoldingBatch batch) {
       color: AppTheme.textMuted,
     );
   }
-  final quantity = batch.zeroCostAlertQuantity;
-  final quantityText = quantity != null && quantity > 0
-      ? ' · 计划 ${Formatters.quantity(quantity)}${batch.quantityUnit}'
-      : '';
+  final quantityText =
+      ' · 计划 ${Formatters.quantity(quantity)}${batch.quantityUnit}';
   if (!batch.zeroCostAlertEnabled) {
     return _ReminderStatus(
       icon: Icons.notifications_off_outlined,
@@ -2112,11 +2113,12 @@ _ReminderStatus? _irrigationReminderStatus(
   HoldingBatch batch,
 ) {
   final price = batch.irrigationAlertPrice;
-  if (price == null || price <= 0) return null;
   final quantity = batch.irrigationAlertQuantity;
-  final quantityText = quantity != null && quantity > 0
-      ? ' · 计划 ${Formatters.quantity(quantity)}${batch.quantityUnit}'
-      : '';
+  if (price == null || price <= 0 || quantity == null || quantity <= 0) {
+    return null;
+  }
+  final quantityText =
+      ' · 计划 ${Formatters.quantity(quantity)}${batch.quantityUnit}';
   final label = '¥${Formatters.price(price)}$quantityText';
   if (!batch.irrigationAlertEnabled) {
     return _ReminderStatus(

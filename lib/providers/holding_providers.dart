@@ -104,10 +104,10 @@ class HoldingPositionsNotifier
 
   Future<void> updateBatchHarvestAlerts(
     int batchId, {
-    required double zeroCostAlertPrice,
-    required double zeroCostAlertQuantity,
-    required double irrigationAlertPrice,
-    required double irrigationAlertQuantity,
+    required double? zeroCostAlertPrice,
+    required double? zeroCostAlertQuantity,
+    required double? irrigationAlertPrice,
+    required double? irrigationAlertQuantity,
   }) async {
     await _db.updateHoldingBatch(batchId, {
       'zero_cost_alert_price': zeroCostAlertPrice,

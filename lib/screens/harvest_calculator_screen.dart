@@ -30,6 +30,8 @@ class HarvestCalculatorScreen extends ConsumerStatefulWidget {
 
 class _HarvestCalculatorScreenState
     extends ConsumerState<HarvestCalculatorScreen> {
+  static const double _lotSize = 100;
+
   late final TextEditingController _currentPriceController;
   late final TextEditingController _remainingCostController;
   late final TextEditingController _quantityController;
@@ -152,7 +154,7 @@ class _HarvestCalculatorScreenState
 
   Future<void> _recordHarvestPlan(_HarvestPlan plan) async {
     final position = _contextPosition();
-    if (position == null || plan.zeroCostSellQty <= 0 || plan.upperPrice <= 0) {
+    if (position == null || !plan.canCreateZeroCostPosition) {
       _showSnack('没有可入账的持仓批次');
       return;
     }
@@ -278,8 +280,10 @@ class _HarvestCalculatorScreenState
       quantity: plan.suggestedBuyQty,
       buyDate: DateTime.now(),
       note: '来自收割计算：灌溉低吸',
-      zeroCostAlertPrice: plan.upperPrice,
-      zeroCostAlertQuantity: plan.zeroCostSellQty,
+      zeroCostAlertPrice:
+          plan.canCreateZeroCostPosition ? plan.upperPrice : null,
+      zeroCostAlertQuantity:
+          plan.canCreateZeroCostPosition ? plan.zeroCostSellQty : null,
       irrigationAlertPrice: plan.lowerPrice,
       irrigationAlertQuantity: plan.suggestedBuyQty,
     );
@@ -313,22 +317,25 @@ class _HarvestCalculatorScreenState
     final batchId = widget.targetBatchId;
     if (batchId == null) return;
     final plan = _plan;
-    if (plan.upperPrice <= 0 || plan.lowerPrice <= 0) return;
+    final hasZeroCostAlert =
+        plan.canCreateZeroCostPosition && plan.upperPrice > 0;
+    final hasIrrigationAlert = plan.suggestedBuyQty > 0 && plan.lowerPrice > 0;
     final signature = [
       batchId,
-      plan.upperPrice.toStringAsFixed(4),
-      plan.zeroCostSellQty.toStringAsFixed(4),
-      plan.lowerPrice.toStringAsFixed(4),
-      plan.suggestedBuyQty.toStringAsFixed(4),
+      hasZeroCostAlert ? plan.upperPrice.toStringAsFixed(4) : 'null',
+      hasZeroCostAlert ? plan.zeroCostSellQty.toStringAsFixed(4) : 'null',
+      hasIrrigationAlert ? plan.lowerPrice.toStringAsFixed(4) : 'null',
+      hasIrrigationAlert ? plan.suggestedBuyQty.toStringAsFixed(4) : 'null',
     ].join(':');
     if (signature == _lastAlertSyncSignature) return;
     _lastAlertSyncSignature = signature;
     await ref.read(holdingPositionsProvider.notifier).updateBatchHarvestAlerts(
           batchId,
-          zeroCostAlertPrice: plan.upperPrice,
-          zeroCostAlertQuantity: plan.zeroCostSellQty,
-          irrigationAlertPrice: plan.lowerPrice,
-          irrigationAlertQuantity: plan.suggestedBuyQty,
+          zeroCostAlertPrice: hasZeroCostAlert ? plan.upperPrice : null,
+          zeroCostAlertQuantity: hasZeroCostAlert ? plan.zeroCostSellQty : null,
+          irrigationAlertPrice: hasIrrigationAlert ? plan.lowerPrice : null,
+          irrigationAlertQuantity:
+              hasIrrigationAlert ? plan.suggestedBuyQty : null,
         );
   }
 
@@ -368,7 +375,7 @@ class _HarvestCalculatorScreenState
     }
 
     final zeroCostSellQty = upper > 0
-        ? _roundSellQuantity(math.min(quantity, remainingCost / upper))
+        ? _roundSellQuantity(remainingCost / upper, availableQty: quantity)
         : 0.0;
     final freeQuantity = math.max(0.0, quantity - zeroCostSellQty);
     final recoveredAtUpper = zeroCostSellQty * upper;
@@ -390,14 +397,16 @@ class _HarvestCalculatorScreenState
     );
   }
 
-  double _roundSellQuantity(double qty) {
-    if (_isFund) return (qty * 10000).ceil() / 10000;
-    return (qty / 100).ceil() * 100;
+  double _roundSellQuantity(double qty, {required double availableQty}) {
+    if (qty <= 0 || availableQty < _lotSize) return 0.0;
+    final roundedQty = (qty / _lotSize).ceil() * _lotSize;
+    final availableLots = (availableQty / _lotSize).floor() * _lotSize;
+    return math.min(roundedQty, availableLots);
   }
 
   double _roundBuyQuantity(double qty) {
-    if (_isFund) return (qty * 10000).floor() / 10000;
-    return (qty / 100).floor() * 100;
+    if (qty < _lotSize) return 0.0;
+    return (qty / _lotSize).floor() * _lotSize;
   }
 
   @override
@@ -849,7 +858,7 @@ class _ZeroCostActionCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final canZero = plan.gapAfterSell <= 0 && plan.zeroCostSellQty > 0;
+    final canZero = plan.canCreateZeroCostPosition;
     final hasData = plan.zeroCostSellQty > 0;
 
     return Container(
@@ -943,7 +952,7 @@ class _ZeroCostActionCard extends StatelessWidget {
             width: double.infinity,
             height: 44,
             child: ElevatedButton.icon(
-              onPressed: canRecord && hasData ? onRecord : null,
+              onPressed: canRecord && canZero ? onRecord : null,
               icon: const Icon(Icons.receipt_long_outlined, size: 18),
               label: const Text('记录本次回收'),
               style: ElevatedButton.styleFrom(
@@ -1446,4 +1455,7 @@ class _HarvestPlan {
     required this.suggestedBuyQty,
     required this.suggestedBuyCash,
   });
+
+  bool get canCreateZeroCostPosition =>
+      gapAfterSell <= 0 && zeroCostSellQty > 0 && freeQuantity > 0;
 }
